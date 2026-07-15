@@ -2,4 +2,5 @@
 - For the execution of any other commands, always use `mise exec -- <command>`.
 - Keep the implementation concise by making full use of the library's features.
 - Whatever language the user uses in their prompt, always use English for code comments and documentation excluding README.md.
+- Whenever specifications change, make sure to update any relevant sections in the README.md.
 - Do not terminate the task until it is completely implemented.

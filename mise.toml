@@ -1,7 +1,7 @@
 settings.experimental = true
 
 [tools]
-rust = { version = "1.95.0", components = "rust-analyzer" }
+rust = { version = "1.95.0", components = "rust-analyzer,clippy,rustfmt" }
 python = "3.14.6"
 lefthook = "2.1.10"
 zizmor = "1.27.0"
