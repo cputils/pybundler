@@ -20,7 +20,7 @@ jobs:
               uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3
 
             - name: Cache Rust dependencies
-              uses: Swatinem/rust-cache@f0e4f57c629058139d192b7e205b94c533be6ea1 # v2
+              uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
             - name: Check
               run: mise check
