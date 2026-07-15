@@ -1,5 +1,7 @@
 # pybundler
 
+![Badge](https://github.com/cputils/pybundler/actions/workflows/ci.yml/badge.svg)
+
 **pybundler** is a Python module bundler. It takes a Python entry file and recursively resolves all of its local import dependencies, then generates a single self-contained Python script that can be run standalone.
 
 Think of it like Webpack or Rollup, but for Python.
