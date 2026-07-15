@@ -1,0 +1,5 @@
+- Once you've completed all implementation, run `mise check` to perform code checks. This command includes linting, formatting and testing for the entire project, so there is no need to check individual files.
+- For the execution of any other commands, always use `mise exec -- <command>`.
+- Keep the implementation concise by making full use of the library's features.
+- Whatever language the user uses in their prompt, always use English for code comments and documentation excluding README.md.
+- Do not terminate the task until it is completely implemented.
