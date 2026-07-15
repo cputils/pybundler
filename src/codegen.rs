@@ -60,7 +60,8 @@ pub(crate) fn generate_bundle_code(
     }
 
     out.push_str("if not globals().get(\"_COLLECTING\"):\n");
-    out.push_str("\t# The following runtime code is part of Axef Python Bundler.\n");
+    out.push_str("\t# The following runtime code is part of pybundler.\n");
+    out.push_str("\t# https://github.com/cputils/pybundler\n");
     out.push_str("\t# SPDX-License-Identifier: CC0-1.0\n");
     out.push('\n');
     out.push_str("\tdef _setup():\n");

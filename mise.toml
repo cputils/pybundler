@@ -14,5 +14,5 @@ run = [
   "cargo clippy --fix --allow-dirty --allow-staged",
   "cargo fmt",
   "cargo test --quiet",
-  "zizmor ."
+  "zizmor . --offline"
 ]
