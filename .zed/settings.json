@@ -26,6 +26,16 @@
                 }
             }
         },
+        "YAML": {
+            "language_servers": [
+                "yaml-language-server"
+            ],
+            "formatter": {
+                "language_server": {
+                    "name": "yaml-language-server"
+                }
+            }
+        },
         "TOML": {
             "language_servers": [
                 "tombi"
