@@ -1,0 +1,4 @@
+{
+    "shouldFail": true,
+    "errorContains": "import_module module name is not statically resolvable"
+}

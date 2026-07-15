@@ -1,0 +1,14 @@
+{
+    "mustContain": [
+        "\t\ttext = \"\"\"alpha\n",
+        "        beta\n",
+        "            gamma\"\"\"\n",
+        "\t\tprint(text)\n"
+    ],
+    "mustNotContain": [
+        "            beta\n",
+        "                gamma\"\"\"\n",
+        "\t        beta\n",
+        "\t            gamma\"\"\"\n"
+    ]
+}

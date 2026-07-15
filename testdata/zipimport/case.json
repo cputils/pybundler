@@ -1,0 +1,5 @@
+{
+    "interpreter": ["zip_pkg.zip"],
+    "mustIncludeModules": ["zip_pkg"],
+    "mustContain": ["HELLO = \"from_zip\""]
+}

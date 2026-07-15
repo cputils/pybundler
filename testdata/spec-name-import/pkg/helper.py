@@ -1,0 +1,1 @@
+VALUE = "spec-name-ok"

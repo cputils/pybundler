@@ -1,0 +1,4 @@
+{
+    "mustBeSynthetic": ["pkg", "pkg.sub"],
+    "mustNotBeSynthetic": ["pkg.sub.mod"]
+}

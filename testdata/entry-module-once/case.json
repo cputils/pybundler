@@ -1,0 +1,6 @@
+{
+    "mustNotContain": ["_setup"],
+    "mustContainCount": {
+        "print(\"entry\")": 1
+    }
+}

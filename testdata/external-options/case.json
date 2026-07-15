@@ -1,0 +1,11 @@
+{
+    "entry": "main.py",
+    "external": ["vendor"],
+    "mustContain": [
+        "import app.runner",
+        "from vendor.tool import helper",
+        "return app.runner.run() + helper()"
+    ],
+    "mustIncludeModules": ["app", "app.runner", "main"],
+    "mustExcludeModules": ["vendor", "vendor.tool"]
+}

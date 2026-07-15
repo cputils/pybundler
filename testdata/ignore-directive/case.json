@@ -1,0 +1,4 @@
+{
+    "mustIncludeModules": ["included"],
+    "mustExcludeModules": ["skipped_next", "skipped_same"]
+}

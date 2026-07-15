@@ -1,0 +1,4 @@
+{
+    "shouldFail": true,
+    "errorContains": "relative import requires a package context"
+}

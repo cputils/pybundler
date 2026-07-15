@@ -1,0 +1,1 @@
+value = "their_module"

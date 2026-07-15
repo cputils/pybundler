@@ -1,0 +1,55 @@
+{
+    "formatter": "language_server",
+    "format_on_save": "on",
+    "tab_size": 4,
+    "hard_tabs": false,
+    "ensure_final_newline_on_save": true,
+    "remove_trailing_whitespace_on_save": true,
+    "languages": {
+        "Rust": {
+            "language_servers": [
+                "rust-analyzer"
+            ],
+            "formatter": {
+                "language_server": {
+                    "name": "rust-analyzer"
+                }
+            }
+        },
+        "JSON": {
+            "language_servers": [
+                "json-language-server"
+            ],
+            "formatter": {
+                "language_server": {
+                    "name": "json-language-server"
+                }
+            }
+        },
+        "TOML": {
+            "language_servers": [
+                "tombi"
+            ],
+            "formatter": {
+                "language_server": {
+                    "name": "tombi"
+                }
+            }
+        },
+        "Python": {
+            "language_servers": []
+        }
+    },
+    "lsp": {
+        "rust-analyzer": {
+            "binary": {
+                "path": "mise",
+                "arguments": [
+                    "exec",
+                    "--",
+                    "rust-analyzer"
+                ]
+            }
+        }
+    }
+}

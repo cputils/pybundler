@@ -1,0 +1,3 @@
+{
+    "mustIncludeModules": ["app.helper1", "app.helper2", "app.helper3"]
+}

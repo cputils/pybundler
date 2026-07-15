@@ -1,0 +1,4 @@
+{
+    "mustIncludeModules": ["pkg", "pkg.helper"],
+    "mustNotBeSynthetic": ["pkg"]
+}

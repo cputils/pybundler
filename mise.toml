@@ -1,0 +1,16 @@
+settings.experimental = true
+
+[tools]
+rust = { version = "1.95.0", components = "rust-analyzer" }
+python = "3.14.6"
+lefthook = "2.1.10"
+
+[hooks]
+postinstall = "lefthook install"
+
+[tasks.check]
+run = [
+  "cargo clippy --fix --allow-dirty --allow-staged",
+  "cargo fmt",
+  "cargo test --quiet"
+]

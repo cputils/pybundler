@@ -1,0 +1,1 @@
+value = "namespace-ok"
