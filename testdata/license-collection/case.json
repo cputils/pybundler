@@ -1,5 +1,5 @@
 {
-    "interpreter": ["ext_lib"],
-    "mustIncludeModules": ["pkg"],
-    "mustContain": ["Dummy License", "licensed-pkg 1.0.0"]
+  "interpreter": ["ext_lib"],
+  "mustIncludeModules": ["pkg"],
+  "mustContain": ["Dummy License", "licensed-pkg 1.0.0"]
 }

@@ -1,4 +1,4 @@
 pre-commit:
-    jobs:
-        - run: mise check
-          stage_fixed: true
+  jobs:
+    - run: mise check
+      stage_fixed: true

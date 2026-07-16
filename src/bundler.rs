@@ -15,10 +15,6 @@ const DEFAULT_MAX_IMPORTED_MODULES: usize = 2048;
 /// Configuration for [`bundle_file`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BundleOptions {
-    /// Project root used for module resolution.
-    ///
-    /// If `None`, the parent directory of the entry file is used.
-    pub project_root: Option<PathBuf>,
     /// Top-level package names that should stay external (not bundled).
     pub external: Vec<String>,
     /// Comment marker used to skip bundling on import lines.
@@ -42,7 +38,6 @@ pub struct BundleOptions {
 impl Default for BundleOptions {
     fn default() -> Self {
         Self {
-            project_root: None,
             external: Vec::new(),
             ignore_comment_literal: DEFAULT_IGNORE_DIRECTIVE.to_string(),
             max_imported_modules: DEFAULT_MAX_IMPORTED_MODULES,
@@ -110,7 +105,7 @@ impl ImportedModuleBudget {
 ///
 /// This function:
 /// - parses the entry module and discovered imports,
-/// - resolves modules under `project_root`,
+/// - resolves modules relative to the entry file's parent directory,
 /// - preserves package semantics (including synthetic parent packages when needed),
 /// - and returns generated Python code plus module graph metadata.
 ///
@@ -123,7 +118,6 @@ impl ImportedModuleBudget {
 ///
 /// Returns an error when:
 /// - `entry_file` is empty, not a `.py` file, or points to a directory,
-/// - `project_root` is invalid or not a directory,
 /// - module parsing/resolution fails for required imports,
 /// - the module expansion exceeds `max_imported_modules`.
 ///
@@ -135,7 +129,6 @@ impl ImportedModuleBudget {
 /// let result = bundle_file(
 ///     "src/main.py",
 ///     BundleOptions {
-///         project_root: Some("src".into()),
 ///         external: vec!["numpy".to_string()],
 ///         ..BundleOptions::default()
 ///     },
@@ -164,21 +157,10 @@ pub fn bundle_file(entry_file: &str, opts: BundleOptions) -> Result<BundleResult
         ));
     }
 
-    let project_root = match opts.project_root {
-        Some(root) => canonical_abs(&root, "resolve project root path")?,
-        None => abs_entry
-            .parent()
-            .ok_or_else(|| "entry file must have parent directory".to_string())?
-            .to_path_buf(),
-    };
-    let root_meta =
-        fs::metadata(&project_root).map_err(|err| format!("stat project root: {err}"))?;
-    if !root_meta.is_dir() {
-        return Err(format!(
-            "project root must be a directory: {}",
-            project_root.display()
-        ));
-    }
+    let project_root = abs_entry
+        .parent()
+        .ok_or_else(|| "entry file must have parent directory".to_string())?
+        .to_path_buf();
 
     let directive = opts.ignore_comment_literal.trim().to_string();
     let external = normalize_external_prefixes(&opts.external);

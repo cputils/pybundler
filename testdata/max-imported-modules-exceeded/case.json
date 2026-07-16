@@ -1,6 +1,6 @@
 {
-    "entry": "main.py",
-    "maxImportedModules": 2,
-    "shouldFail": true,
-    "errorContains": "imported module limit of 2 exceeded"
+  "entry": "main.py",
+  "maxImportedModules": 2,
+  "shouldFail": true,
+  "errorContains": "imported module limit of 2 exceeded"
 }

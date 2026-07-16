@@ -83,7 +83,6 @@ fn execute_scenario(scenario_path: &Path, project_root: &Path, scenario: &Bundle
     let result = bundle_file(
         &project_root.join(&scenario.entry).display().to_string(),
         BundleOptions {
-            project_root: Some(project_root.to_path_buf()),
             external: scenario.external.clone(),
             ignore_comment_literal: "no-bundle".to_string(),
             max_imported_modules: scenario.max_imported_modules,

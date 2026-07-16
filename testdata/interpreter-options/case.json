@@ -1,5 +1,5 @@
 {
-    "interpreter": ["ext_lib"],
-    "mustIncludeModules": ["pkg1", "pkg2"],
-    "mustContain": ["VALUE = 1"]
+  "interpreter": ["ext_lib"],
+  "mustIncludeModules": ["pkg1", "pkg2"],
+  "mustContain": ["VALUE = 1"]
 }

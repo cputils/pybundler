@@ -1,4 +1,4 @@
 {
-    "entry": "missing.py",
-    "shouldFail": true
+  "entry": "missing.py",
+  "shouldFail": true
 }

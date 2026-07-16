@@ -1,6 +1,6 @@
 {
-    "mustIncludeModules": ["foo", "foo.bar"],
-    "mustNotBeSynthetic": ["foo"],
-    "mustContain": ["\"pkg\""],
-    "mustNotContain": ["\"mod\""]
+  "mustIncludeModules": ["foo", "foo.bar"],
+  "mustNotBeSynthetic": ["foo"],
+  "mustContain": ["\"pkg\""],
+  "mustNotContain": ["\"mod\""]
 }

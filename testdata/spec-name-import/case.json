@@ -1,5 +1,4 @@
 {
-    "entry": "pkg/__init__.py",
-    "mustIncludeModules": ["pkg", "pkg.helper"],
-    "mustNotBeSynthetic": ["pkg", "pkg.helper"]
+  "mustIncludeModules": ["pkg", "pkg.helper"],
+  "mustNotBeSynthetic": ["pkg", "pkg.helper"]
 }

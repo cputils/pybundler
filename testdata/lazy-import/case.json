@@ -1,4 +1,4 @@
 {
-    "mustIncludeModules": ["helper", "main"],
-    "mustContain": ["lazy import helper", "VALUE = 42"]
+  "mustIncludeModules": ["helper", "main"],
+  "mustContain": ["lazy import helper", "VALUE = 42"]
 }

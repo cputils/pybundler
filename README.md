@@ -45,13 +45,12 @@ std::fs::write("bundled.py", result.code)?;
 
 ### Options
 
-| Option                   | Description                                            | Default                            |
-| ------------------------ | ------------------------------------------------------ | ---------------------------------- |
-| `project_root`           | Project root for module resolution                     | Parent directory of the entry file |
-| `external`               | Package names to keep as runtime imports (not bundled) | `[]`                               |
-| `ignore_comment_literal` | Comment marker that excludes an import from bundling   | `"no-bundle"`                      |
-| `max_imported_modules`   | Maximum number of modules to bundle                    | `2048`                             |
-| `interpreter`            | Python interpreter paths used to discover `sys.path`   | `[]`                               |
+| Option                   | Description                                            | Default       |
+| ------------------------ | ------------------------------------------------------ | ------------- |
+| `external`               | Package names to keep as runtime imports (not bundled) | `[]`          |
+| `ignore_comment_literal` | Comment marker that excludes an import from bundling   | `"no-bundle"` |
+| `max_imported_modules`   | Maximum number of modules to bundle                    | `2048`        |
+| `interpreter`            | Python interpreter paths used to discover `sys.path`   | `[]`          |
 
 ## License
 

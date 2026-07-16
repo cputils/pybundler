@@ -1,20 +1,19 @@
 {
-    "entry": "top/parent/pkg/main.py",
-    "mustIncludeModules": [
-        "math",
-        "numpy",
-        "pandas",
-        "os",
-        "sys",
-        "time",
-        "top",
-        "top.parent",
-        "top.parent.pkg",
-        "top.parent.pkg.sibling_module",
-        "top.parent.parent_module",
-        "top.grand_parent_module",
-        "top.parent.other_package",
-        "top.parent.other_package.their_module"
-    ],
-    "mustNotBeSynthetic": ["top", "top.parent", "top.parent.pkg", "top.parent.other_package"]
+  "mustIncludeModules": [
+    "math",
+    "numpy",
+    "pandas",
+    "os",
+    "sys",
+    "time",
+    "top",
+    "top.parent",
+    "top.parent.pkg",
+    "top.parent.pkg.sibling_module",
+    "top.parent.parent_module",
+    "top.grand_parent_module",
+    "top.parent.other_package",
+    "top.parent.other_package.their_module"
+  ],
+  "mustNotBeSynthetic": ["top", "top.parent", "top.parent.pkg", "top.parent.other_package"]
 }

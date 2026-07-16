@@ -1,4 +1,4 @@
 {
-    "mustContain": ["    def main():", "        spaced = 1"],
-    "mustNotContain": ["\tdef main():", "\t\tspaced = 1"]
+  "mustContain": ["    def main():", "        spaced = 1"],
+  "mustNotContain": ["\tdef main():", "\t\tspaced = 1"]
 }
