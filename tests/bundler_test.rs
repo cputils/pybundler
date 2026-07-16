@@ -33,6 +33,8 @@ struct BundleScenario {
     interpreter: Vec<String>,
     #[serde(rename = "treeShaking")]
     tree_shaking: Option<bool>,
+    #[serde(rename = "format")]
+    format: Option<bool>,
 }
 
 impl BundleScenario {
@@ -90,6 +92,7 @@ fn execute_scenario(scenario_path: &Path, project_root: &Path, scenario: &Bundle
             max_imported_modules: scenario.max_imported_modules,
             interpreter,
             tree_shaking: scenario.tree_shaking.unwrap_or(false),
+            format: scenario.format.unwrap_or(false),
         },
     );
 

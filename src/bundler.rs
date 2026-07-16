@@ -9,6 +9,7 @@ use crate::module_graph::{ensure_parent_packages, module_name_from_path};
 use crate::resolver::{ModuleResolver, read_module_source};
 use crate::sys_paths::discover_sys_paths;
 use crate::tree_shaking::remove_unused_imports;
+use ruff_python_formatter::{PyFormatOptions, format_module_source};
 
 const DEFAULT_IGNORE_DIRECTIVE: &str = "no-bundle";
 const DEFAULT_MAX_IMPORTED_MODULES: usize = 2048;
@@ -38,6 +39,10 @@ pub struct BundleOptions {
     ///
     /// Defaults to `true`.
     pub tree_shaking: bool,
+    /// Whether to format the bundled output with Ruff.
+    ///
+    /// Defaults to `false`.
+    pub format: bool,
 }
 
 impl Default for BundleOptions {
@@ -48,6 +53,7 @@ impl Default for BundleOptions {
             max_imported_modules: DEFAULT_MAX_IMPORTED_MODULES,
             interpreter: Vec::new(),
             tree_shaking: true,
+            format: false,
         }
     }
 }
@@ -358,7 +364,12 @@ pub fn bundle_file(entry_file: &str, opts: BundleOptions) -> Result<BundleResult
         .cloned()
         .ok_or_else(|| format!("internal error: entry module {:?} missing", entry_module))?;
 
-    let code = generate_bundle_code(&entry_module_data, &module_map, &license_headers);
+    let mut code = generate_bundle_code(&entry_module_data, &module_map, &license_headers);
+    if opts.format {
+        code = format_module_source(&code, PyFormatOptions::default())
+            .map(|printed| printed.into_code())
+            .unwrap_or(code);
+    }
     let mut module_list = module_map
         .values()
         .map(|mod_data| BundledModule {
