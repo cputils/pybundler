@@ -1,4 +1,4 @@
-//! Python module bundler for Axef.
+//! pybundler (https://github.com/cputils/pybundler)
 //!
 //! Use [`bundle_file`] to bundle an entry Python file and its local imports into a single script.
 
