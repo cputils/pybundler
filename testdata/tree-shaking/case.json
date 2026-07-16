@@ -1,0 +1,10 @@
+{
+  "treeShaking": true,
+  "mustContain": [
+    "from sys import argv"
+  ],
+  "mustNotContain": [
+    "import os",
+    "import math"
+  ]
+}

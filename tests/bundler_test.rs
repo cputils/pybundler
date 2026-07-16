@@ -31,6 +31,8 @@ struct BundleScenario {
     #[serde(rename = "mustContainCount")]
     must_contain_count: HashMap<String, usize>,
     interpreter: Vec<String>,
+    #[serde(rename = "treeShaking")]
+    tree_shaking: Option<bool>,
 }
 
 impl BundleScenario {
@@ -87,6 +89,7 @@ fn execute_scenario(scenario_path: &Path, project_root: &Path, scenario: &Bundle
             ignore_comment_literal: "no-bundle".to_string(),
             max_imported_modules: scenario.max_imported_modules,
             interpreter,
+            tree_shaking: scenario.tree_shaking.unwrap_or(false),
         },
     );
 

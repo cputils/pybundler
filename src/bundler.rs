@@ -8,6 +8,7 @@ use crate::licenses::collect_license_comments;
 use crate::module_graph::{ensure_parent_packages, module_name_from_path};
 use crate::resolver::{ModuleResolver, read_module_source};
 use crate::sys_paths::discover_sys_paths;
+use crate::tree_shaking::remove_unused_imports;
 
 const DEFAULT_IGNORE_DIRECTIVE: &str = "no-bundle";
 const DEFAULT_MAX_IMPORTED_MODULES: usize = 2048;
@@ -33,6 +34,10 @@ pub struct BundleOptions {
     ///
     /// When empty, no `sys.path` discovery is performed.
     pub interpreter: Vec<String>,
+    /// Whether to remove unused imports from the bundled output.
+    ///
+    /// Defaults to `true`.
+    pub tree_shaking: bool,
 }
 
 impl Default for BundleOptions {
@@ -42,6 +47,7 @@ impl Default for BundleOptions {
             ignore_comment_literal: DEFAULT_IGNORE_DIRECTIVE.to_string(),
             max_imported_modules: DEFAULT_MAX_IMPORTED_MODULES,
             interpreter: Vec::new(),
+            tree_shaking: true,
         }
     }
 }
@@ -165,6 +171,7 @@ pub fn bundle_file(entry_file: &str, opts: BundleOptions) -> Result<BundleResult
     let directive = opts.ignore_comment_literal.trim().to_string();
     let external = normalize_external_prefixes(&opts.external);
     let max_imported_modules = opts.max_imported_modules;
+    let tree_shaking_enabled = opts.tree_shaking;
     let mut import_budget = ImportedModuleBudget {
         max_imported_modules,
         imported_count: 0,
@@ -176,7 +183,7 @@ pub fn bundle_file(entry_file: &str, opts: BundleOptions) -> Result<BundleResult
     search_roots.extend(discover_sys_paths(&opts.interpreter));
     let resolver = ModuleResolver::new(search_roots.clone());
     let mut module_map: HashMap<String, ModuleData> = HashMap::new();
-    let mut analysis_cache: HashMap<PathBuf, ModuleAnalysis> = HashMap::new();
+    let mut analysis_cache: HashMap<PathBuf, (ModuleAnalysis, Vec<u8>)> = HashMap::new();
     let mut queue = VecDeque::from([entry_module.clone()]);
     module_map.insert(
         entry_module.clone(),
@@ -210,30 +217,34 @@ pub fn bundle_file(entry_file: &str, opts: BundleOptions) -> Result<BundleResult
                 )
             })?;
             let mut analyzed = current_snapshot.clone();
-            analyzed.source = source;
+            if tree_shaking_enabled {
+                let source_str = String::from_utf8_lossy(&source).to_string();
+                analyzed.source = remove_unused_imports(&source_str).into_bytes();
+            } else {
+                analyzed.source = source;
+            }
             analyzed.analysis = Some(analyze_module(&analyzed, &directive)?);
             analysis_cache.insert(
                 current_snapshot.file_path.clone(),
-                analyzed
-                    .analysis
-                    .clone()
-                    .ok_or_else(|| "internal error: missing analysis".to_string())?,
+                (
+                    analyzed
+                        .analysis
+                        .clone()
+                        .ok_or_else(|| "internal error: missing analysis".to_string())?,
+                    analyzed.source.clone(),
+                ),
             );
             if let Some(current) = module_map.get_mut(&current_name) {
                 current.source = analyzed.source;
                 current.analysis = analyzed.analysis;
             }
         } else {
-            let source = read_module_source(&current_snapshot.file_path).map_err(|err| {
-                format!(
-                    "read module {:?} ({}): {err}",
-                    current_snapshot.name,
-                    current_snapshot.file_path.display()
-                )
-            })?;
             if let Some(current) = module_map.get_mut(&current_name) {
-                current.source = source;
-                current.analysis = analysis_cache.get(&current_snapshot.file_path).cloned();
+                let (analysis, shaken) = analysis_cache
+                    .get(&current_snapshot.file_path)
+                    .ok_or_else(|| "internal error: missing cache entry".to_string())?;
+                current.source.clone_from(shaken);
+                current.analysis = Some(analysis.clone());
             }
         }
 
@@ -342,14 +353,10 @@ pub fn bundle_file(entry_file: &str, opts: BundleOptions) -> Result<BundleResult
             .push(header);
     }
 
-    let mut entry_module_data = module_map
+    let entry_module_data = module_map
         .get(&entry_module)
         .cloned()
         .ok_or_else(|| format!("internal error: entry module {:?} missing", entry_module))?;
-    if entry_module_data.source.is_empty() {
-        entry_module_data.source = read_module_source(&entry_module_data.file_path)
-            .map_err(|err| format!("read entry module: {err}"))?;
-    }
 
     let code = generate_bundle_code(&entry_module_data, &module_map, &license_headers);
     let mut module_list = module_map
@@ -379,7 +386,9 @@ fn canonical_abs(path: &Path, context: &str) -> Result<PathBuf, String> {
             .map_err(|err| format!("{context}: {err}"))?
             .join(path)
     };
-    Ok(abs.components().collect())
+    use path_clean::PathClean;
+
+    Ok(abs.clean())
 }
 
 fn has_py_extension(path: &Path) -> bool {

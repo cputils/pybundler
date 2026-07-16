@@ -9,5 +9,6 @@ mod licenses;
 mod module_graph;
 mod resolver;
 mod sys_paths;
+mod tree_shaking;
 
 pub use bundler::{BundleOptions, BundleResult, BundledModule, bundle_file};

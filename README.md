@@ -24,6 +24,7 @@ Think of it like Webpack or Rollup, but for Python.
 - Automatically collects and embeds license texts from third-party packages
 - Supports namespace packages by synthesizing missing `__init__.py` parents
 - Queries Python interpreters to discover `sys.path` for accurate module resolution
+- Tree shaking: removes unused imports from bundled modules (configurable)
 
 ## Usage
 
@@ -51,6 +52,7 @@ std::fs::write("bundled.py", result.code)?;
 | `ignore_comment_literal` | Comment marker that excludes an import from bundling   | `"no-bundle"` |
 | `max_imported_modules`   | Maximum number of modules to bundle                    | `2048`        |
 | `interpreter`            | Python interpreter paths used to discover `sys.path`   | `[]`          |
+| `tree_shaking`           | Remove unused imports from bundled output              | `true`        |
 
 ## License
 

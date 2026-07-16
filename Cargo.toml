@@ -3,6 +3,8 @@ name = "pybundler"
 edition = "2024"
 
 [dependencies]
+path-clean = "1"
+ruff_linter = { git = "https://github.com/astral-sh/ruff", tag = "0.15.15" }
 ruff_python_ast = { git = "https://github.com/astral-sh/ruff", tag = "0.15.15" }
 ruff_python_parser = { git = "https://github.com/astral-sh/ruff", tag = "0.15.15" }
 ruff_source_file = { git = "https://github.com/astral-sh/ruff", tag = "0.15.15" }
