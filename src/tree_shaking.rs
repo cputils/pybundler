@@ -19,7 +19,7 @@ pub(crate) fn remove_unused_imports(source: &str) -> String {
     let result = match lint_fix(
         path,
         None,
-        flags::Noqa::Disabled,
+        flags::Noqa::Enabled,
         UnsafeFixes::Disabled,
         &settings,
         &source_kind,

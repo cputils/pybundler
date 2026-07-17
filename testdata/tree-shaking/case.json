@@ -1,7 +1,8 @@
 {
   "treeShaking": true,
   "mustContain": [
-    "from math import pi"
+    "from math import pi",
+    "import sys"
   ],
   "mustNotContain": [
     "import os",
