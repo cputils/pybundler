@@ -1,7 +1,7 @@
 {
   "treeShaking": true,
   "mustContain": [
-    "from sys import argv"
+    "from math import pi"
   ],
   "mustNotContain": [
     "import os",

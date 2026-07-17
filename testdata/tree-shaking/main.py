@@ -1,5 +1,5 @@
 import os  # unused
-from sys import argv  # used
+from math import pi  # used
 import math  # unused
 
-print(argv)
+print(pi)

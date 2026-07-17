@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
 
 use pybundler::{BundleOptions, BundledModule, bundle_file};
 use serde::Deserialize;
@@ -35,6 +36,8 @@ struct BundleScenario {
     tree_shaking: Option<bool>,
     #[serde(rename = "format")]
     format: Option<bool>,
+    #[serde(rename = "skipOutputCheck")]
+    skip_output_check: bool,
 }
 
 impl BundleScenario {
@@ -170,6 +173,10 @@ fn execute_scenario(scenario_path: &Path, project_root: &Path, scenario: &Bundle
             token, expected, actual
         );
     }
+
+    if !scenario.skip_output_check {
+        check_runtime_output(scenario_path, project_root, scenario);
+    }
 }
 
 fn discover_scenario_names() -> Vec<String> {
@@ -247,6 +254,52 @@ fn bundled_module_map(modules: &[BundledModule]) -> HashMap<String, BundledModul
         out.insert(module.name.clone(), module.clone());
     }
     out
+}
+
+fn check_runtime_output(scenario_path: &Path, project_root: &Path, scenario: &BundleScenario) {
+    let mut python_paths = vec![project_root.to_path_buf()];
+    for name in &scenario.interpreter {
+        python_paths.push(project_root.join(name));
+    }
+    let python_path = python_paths
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect::<Vec<_>>()
+        .join(":");
+
+    let entry_path = project_root.join(&scenario.entry);
+    let bundle_path = project_root.join("bundled.py");
+
+    let original = run_python(&entry_path, Some(&python_path));
+    let bundled = run_python(&bundle_path, None);
+
+    let scenario_name = scenario_path.file_name().unwrap().to_string_lossy();
+    assert_eq!(
+        original.status.success(),
+        bundled.status.success(),
+        "exit status mismatch for {scenario_name}: original={:?} bundled={:?}",
+        original.status,
+        bundled.status,
+    );
+    assert_eq!(
+        original.stdout,
+        bundled.stdout,
+        "stdout mismatch for {scenario_name}\n\
+         expected:\n{}\n\
+         got:\n{}",
+        String::from_utf8_lossy(&original.stdout),
+        String::from_utf8_lossy(&bundled.stdout),
+    );
+}
+
+fn run_python(script: &Path, python_path: Option<&str>) -> Output {
+    let mut cmd = Command::new("python");
+    cmd.arg(script);
+    if let Some(path) = python_path {
+        cmd.env("PYTHONPATH", path);
+    }
+    cmd.output()
+        .unwrap_or_else(|err| panic!("failed to run python {}: {err}", script.display()))
 }
 
 fn normalize_newlines(value: &str) -> String {
