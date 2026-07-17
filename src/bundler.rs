@@ -11,7 +11,6 @@ use crate::sys_paths::discover_sys_paths;
 use crate::tree_shaking::remove_unused_imports;
 use ruff_python_formatter::{PyFormatOptions, format_module_source};
 
-const DEFAULT_IGNORE_DIRECTIVE: &str = "no-bundle";
 const DEFAULT_MAX_IMPORTED_MODULES: usize = 2048;
 
 /// Configuration for [`bundle_file`].
@@ -19,10 +18,6 @@ const DEFAULT_MAX_IMPORTED_MODULES: usize = 2048;
 pub struct BundleOptions {
     /// Top-level package names that should stay external (not bundled).
     pub external: Vec<String>,
-    /// Comment marker used to skip bundling on import lines.
-    ///
-    /// Defaults to `"no-bundle"`.
-    pub ignore_comment_literal: String,
     /// Maximum number of imported modules allowed during graph expansion.
     ///
     /// Defaults to 2048.
@@ -49,7 +44,6 @@ impl Default for BundleOptions {
     fn default() -> Self {
         Self {
             external: Vec::new(),
-            ignore_comment_literal: DEFAULT_IGNORE_DIRECTIVE.to_string(),
             max_imported_modules: DEFAULT_MAX_IMPORTED_MODULES,
             interpreter: Vec::new(),
             tree_shaking: true,
@@ -123,7 +117,6 @@ impl ImportedModuleBudget {
 ///
 /// Imports can be controlled with [`BundleOptions`]:
 /// - `external`: keeps selected top-level packages as runtime imports instead of bundling.
-/// - `ignore_comment_literal`: skips imports annotated with the marker (default: `no-bundle`).
 /// - `max_imported_modules`: protects against runaway dependency expansion.
 ///
 /// # Errors
@@ -174,7 +167,6 @@ pub fn bundle_file(entry_file: &str, opts: BundleOptions) -> Result<BundleResult
         .ok_or_else(|| "entry file must have parent directory".to_string())?
         .to_path_buf();
 
-    let directive = opts.ignore_comment_literal.trim().to_string();
     let external = normalize_external_prefixes(&opts.external);
     let max_imported_modules = opts.max_imported_modules;
     let tree_shaking_enabled = opts.tree_shaking;
@@ -229,7 +221,7 @@ pub fn bundle_file(entry_file: &str, opts: BundleOptions) -> Result<BundleResult
             } else {
                 analyzed.source = source;
             }
-            analyzed.analysis = Some(analyze_module(&analyzed, &directive)?);
+            analyzed.analysis = Some(analyze_module(&analyzed)?);
             analysis_cache.insert(
                 current_snapshot.file_path.clone(),
                 (
@@ -279,7 +271,7 @@ pub fn bundle_file(entry_file: &str, opts: BundleOptions) -> Result<BundleResult
                     )
                 })?;
             }
-            if should_preserve_external_import(&target_name, &external) {
+            if !req.force_bundle && should_preserve_external_import(&target_name, &external) {
                 continue;
             }
 

@@ -1,0 +1,5 @@
+{
+  "entry": "main.py",
+  "shouldFail": true,
+  "errorContains": "conflicting directives"
+}

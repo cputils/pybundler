@@ -20,6 +20,7 @@ pub(crate) struct ImportRequest {
     pub relative_level: usize,
     pub must_resolve: bool,
     pub require_parent_packages: bool,
+    pub force_bundle: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -50,32 +51,43 @@ struct AliasState {
     import_builtin_fns: HashSet<String>,
 }
 
-pub(crate) fn analyze_module(
-    mod_data: &ModuleData,
-    directive: &str,
-) -> Result<ModuleAnalysis, String> {
+pub(crate) fn analyze_module(mod_data: &ModuleData) -> Result<ModuleAnalysis, String> {
     let source = String::from_utf8_lossy(&mod_data.source).to_string();
     let parsed = parse_module(&source)
         .map_err(|err| format!("parse {}: {err}", mod_data.file_path.display()))?;
     let module = parsed.syntax();
     let line_index = LineIndex::from_source_text(&source);
+    let file_path = mod_data.file_path.display().to_string();
 
     let mut ctx = EvalContext {
         module_name: mod_data.name.clone(),
         package_name: module_package_name(&mod_data.name, mod_data.is_package),
-        file_path: mod_data.file_path.display().to_string(),
+        file_path: file_path.clone(),
         string_constants: HashMap::new(),
         int_constants: HashMap::new(),
     };
     collect_top_level_constants(&module.body, &mut ctx);
-    let (skip_lines, multiline_lines) =
-        collect_source_metadata(&source, &parsed, directive, &line_index);
+    let (skip_lines, bundle_lines, multiline_lines) =
+        collect_source_metadata(&source, &parsed, &line_index);
+
+    // Detect conflict between bundle and no-bundle directives
+    for line in 0..source.lines().count() {
+        if is_skipped_import(line, &skip_lines) && is_bundle_import(line, &bundle_lines) {
+            return Err(format!(
+                "{} line {}: conflicting directives in import comment",
+                file_path,
+                line + 1
+            ));
+        }
+    }
+
     let aliases = collect_aliases(module);
 
     let mut collector = ImportCollector {
         requests: Vec::new(),
         walk_error: None,
         skip_lines,
+        bundle_lines,
         aliases,
         ctx,
         line_index,
@@ -97,6 +109,7 @@ struct ImportCollector {
     requests: Vec<ImportRequest>,
     walk_error: Option<String>,
     skip_lines: SkipDirectives,
+    bundle_lines: SkipDirectives,
     aliases: AliasState,
     ctx: EvalContext,
     line_index: LineIndex,
@@ -116,14 +129,17 @@ impl<'a> Visitor<'a> for ImportCollector {
         match stmt {
             Stmt::Import(node) => {
                 let line = self.node_line(node.range.start());
+                let force_bundle = is_bundle_import(line, &self.bundle_lines);
                 if !is_skipped_import(line, &self.skip_lines) {
-                    self.requests.extend(parse_import_statement(node, line));
+                    self.requests
+                        .extend(parse_import_statement(node, line, force_bundle));
                 }
             }
             Stmt::ImportFrom(node) => {
                 let line = self.node_line(node.range.start());
+                let force_bundle = is_bundle_import(line, &self.bundle_lines);
                 if !is_skipped_import(line, &self.skip_lines) {
-                    match parse_from_import_statement(node, line) {
+                    match parse_from_import_statement(node, line, force_bundle) {
                         Ok(reqs) => self.requests.extend(reqs),
                         Err(err) => {
                             self.walk_error =
@@ -144,8 +160,10 @@ impl<'a> Visitor<'a> for ImportCollector {
         }
         if let Expr::Call(call) = expr {
             let line = self.node_line(call.range.start());
+            let force_bundle = is_bundle_import(line, &self.bundle_lines);
             if !is_skipped_import(line, &self.skip_lines) {
-                match parse_dynamic_import_call(call, line, &self.ctx, &self.aliases) {
+                match parse_dynamic_import_call(call, line, &self.ctx, &self.aliases, force_bundle)
+                {
                     Ok((reqs, handled)) => {
                         if handled {
                             self.requests.extend(reqs);
@@ -163,37 +181,51 @@ impl<'a> Visitor<'a> for ImportCollector {
     }
 }
 
+fn comment_has_bundle(comment_body: &str) -> bool {
+    comment_body
+        .split(|c: char| !c.is_alphanumeric() && c != '-')
+        .any(|part| part == "bundle")
+}
+
 fn collect_source_metadata(
     source: &str,
     parsed: &Parsed<ModModule>,
-    directive: &str,
     line_index: &LineIndex,
-) -> (SkipDirectives, HashSet<usize>) {
-    let mut lines = SkipDirectives {
-        same_line: HashSet::new(),
-        next_line: HashSet::new(),
-    };
+) -> (SkipDirectives, SkipDirectives, HashSet<usize>) {
+    let mut skip_lines = SkipDirectives::default();
+    let mut bundle_lines = SkipDirectives::default();
     let mut multiline = HashSet::new();
-    let needle = directive.trim().to_ascii_lowercase();
+    let skip_needle = "no-bundle";
 
     for token in parsed.tokens() {
         let token_range = token.range();
         let line = line_index.line_index(token_range.start()).to_zero_indexed();
 
-        if token.kind() == TokenKind::Comment && !needle.is_empty() {
+        if token.kind() == TokenKind::Comment {
             let raw_comment = &source[token_range];
             let comment_body = raw_comment
                 .strip_prefix('#')
                 .unwrap_or(raw_comment)
                 .trim()
                 .to_ascii_lowercase();
-            if comment_body.contains(&needle) {
-                lines.same_line.insert(line);
+
+            if comment_body.contains(skip_needle) {
+                skip_lines.same_line.insert(line);
 
                 let line_start = line_index.line_start(OneIndexed::from_zero_indexed(line), source);
                 let leading_range = TextRange::new(line_start, token_range.start());
                 if source[leading_range].trim().is_empty() {
-                    lines.next_line.insert(line);
+                    skip_lines.next_line.insert(line);
+                }
+            }
+
+            if comment_has_bundle(&comment_body) {
+                bundle_lines.same_line.insert(line);
+
+                let line_start = line_index.line_start(OneIndexed::from_zero_indexed(line), source);
+                let leading_range = TextRange::new(line_start, token_range.start());
+                if source[leading_range].trim().is_empty() {
+                    bundle_lines.next_line.insert(line);
                 }
             }
         }
@@ -208,7 +240,7 @@ fn collect_source_metadata(
         }
     }
 
-    (lines, multiline)
+    (skip_lines, bundle_lines, multiline)
 }
 
 fn is_multiline_string_token(
@@ -250,7 +282,18 @@ fn is_skipped_import(line: usize, skip_lines: &SkipDirectives) -> bool {
             .is_some_and(|prev| skip_lines.next_line.contains(&prev))
 }
 
-fn parse_import_statement(node: &ruff_python_ast::StmtImport, line: usize) -> Vec<ImportRequest> {
+fn is_bundle_import(line: usize, bundle_lines: &SkipDirectives) -> bool {
+    bundle_lines.same_line.contains(&line)
+        || line
+            .checked_sub(1)
+            .is_some_and(|prev| bundle_lines.next_line.contains(&prev))
+}
+
+fn parse_import_statement(
+    node: &ruff_python_ast::StmtImport,
+    line: usize,
+    force_bundle: bool,
+) -> Vec<ImportRequest> {
     node.names
         .iter()
         .filter_map(parse_import_name)
@@ -261,6 +304,7 @@ fn parse_import_statement(node: &ruff_python_ast::StmtImport, line: usize) -> Ve
             relative_level: 0,
             must_resolve: false,
             require_parent_packages: true,
+            force_bundle,
         })
         .collect()
 }
@@ -268,6 +312,7 @@ fn parse_import_statement(node: &ruff_python_ast::StmtImport, line: usize) -> Ve
 fn parse_from_import_statement(
     node: &ruff_python_ast::StmtImportFrom,
     line: usize,
+    force_bundle: bool,
 ) -> Result<Vec<ImportRequest>, String> {
     let base_module = node
         .module
@@ -284,6 +329,7 @@ fn parse_from_import_statement(
         relative_level,
         must_resolve: is_relative,
         require_parent_packages: true,
+        force_bundle,
     }];
 
     for alias in &node.names {
@@ -305,6 +351,7 @@ fn parse_from_import_statement(
             relative_level,
             must_resolve: false,
             require_parent_packages: true,
+            force_bundle,
         });
     }
 
@@ -328,6 +375,7 @@ fn parse_dynamic_import_call(
     line: usize,
     ctx: &EvalContext,
     aliases: &AliasState,
+    force_bundle: bool,
 ) -> Result<(Vec<ImportRequest>, bool), String> {
     let Some(fn_kind) = identify_dynamic_import_function(&node.func, aliases) else {
         return Ok((Vec::new(), false));
@@ -375,6 +423,7 @@ fn parse_dynamic_import_call(
                     relative_level,
                     must_resolve,
                     require_parent_packages: true,
+                    force_bundle,
                 }],
                 true,
             ))
@@ -420,6 +469,7 @@ fn parse_dynamic_import_call(
                     relative_level: 0,
                     must_resolve,
                     require_parent_packages: true,
+                    force_bundle,
                 }],
                 true,
             ))

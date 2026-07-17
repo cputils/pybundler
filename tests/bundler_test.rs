@@ -91,7 +91,6 @@ fn execute_scenario(scenario_path: &Path, project_root: &Path, scenario: &Bundle
         &project_root.join(&scenario.entry).display().to_string(),
         BundleOptions {
             external: scenario.external.clone(),
-            ignore_comment_literal: "no-bundle".to_string(),
             max_imported_modules: scenario.max_imported_modules,
             interpreter,
             tree_shaking: scenario.tree_shaking.unwrap_or(false),
