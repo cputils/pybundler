@@ -1,0 +1,4 @@
+{
+  "shouldFail": true,
+  "errorContains": "relative import goes beyond top-level package"
+}

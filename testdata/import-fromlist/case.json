@@ -1,0 +1,3 @@
+{
+  "mustIncludeModules": ["main", "pkg", "pkg.sub"]
+}

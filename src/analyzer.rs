@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use ruff_python_ast::visitor::{self, Visitor};
 use ruff_python_ast::{
-    Alias, Expr, ExprAttribute, ExprCall, ExprName, ModModule, Number, Operator, Stmt,
-    token::{TokenKind, Tokens},
+    Alias, Expr, ExprAttribute, ExprCall, ExprName, ModModule, Number, Operator, Stmt, UnaryOp,
+    token::TokenKind,
 };
 use ruff_python_parser::{Parsed, parse_module};
 use ruff_source_file::{LineIndex, OneIndexed};
@@ -21,12 +21,13 @@ pub(crate) struct ImportRequest {
     pub must_resolve: bool,
     pub require_parent_packages: bool,
     pub force_bundle: bool,
+    pub expand_all: bool,
 }
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ModuleAnalysis {
     pub import_requests: Vec<ImportRequest>,
-    pub multiline_string_continuation_lines: HashSet<usize>,
+    pub all_names: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -42,11 +43,13 @@ struct EvalContext {
     file_path: String,
     string_constants: HashMap<String, String>,
     int_constants: HashMap<String, i32>,
+    string_sequence_constants: HashMap<String, Vec<String>>,
 }
 
 #[derive(Clone, Debug, Default)]
 struct AliasState {
     importlib_modules: HashSet<String>,
+    builtins_modules: HashSet<String>,
     import_module_fns: HashSet<String>,
     import_builtin_fns: HashSet<String>,
 }
@@ -65,10 +68,10 @@ pub(crate) fn analyze_module(mod_data: &ModuleData) -> Result<ModuleAnalysis, St
         file_path: file_path.clone(),
         string_constants: HashMap::new(),
         int_constants: HashMap::new(),
+        string_sequence_constants: HashMap::new(),
     };
     collect_top_level_constants(&module.body, &mut ctx);
-    let (skip_lines, bundle_lines, multiline_lines) =
-        collect_source_metadata(&source, &parsed, &line_index);
+    let (skip_lines, bundle_lines) = collect_source_metadata(&source, &parsed, &line_index);
 
     // Detect conflict between bundle and no-bundle directives
     for line in 0..source.lines().count() {
@@ -82,6 +85,11 @@ pub(crate) fn analyze_module(mod_data: &ModuleData) -> Result<ModuleAnalysis, St
     }
 
     let aliases = collect_aliases(module);
+    let all_names = ctx
+        .string_sequence_constants
+        .get("__all__")
+        .cloned()
+        .unwrap_or_default();
 
     let mut collector = ImportCollector {
         requests: Vec::new(),
@@ -101,7 +109,7 @@ pub(crate) fn analyze_module(mod_data: &ModuleData) -> Result<ModuleAnalysis, St
 
     Ok(ModuleAnalysis {
         import_requests: collector.requests,
-        multiline_string_continuation_lines: multiline_lines,
+        all_names,
     })
 }
 
@@ -191,10 +199,9 @@ fn collect_source_metadata(
     source: &str,
     parsed: &Parsed<ModModule>,
     line_index: &LineIndex,
-) -> (SkipDirectives, SkipDirectives, HashSet<usize>) {
+) -> (SkipDirectives, SkipDirectives) {
     let mut skip_lines = SkipDirectives::default();
     let mut bundle_lines = SkipDirectives::default();
-    let mut multiline = HashSet::new();
     let skip_needle = "no-bundle";
 
     for token in parsed.tokens() {
@@ -229,50 +236,9 @@ fn collect_source_metadata(
                 }
             }
         }
-
-        if is_multiline_string_token(token, parsed.tokens(), line_index) {
-            let end_line = line_index
-                .line_index(token_range.end().saturating_sub(TextSize::new(1)))
-                .to_zero_indexed();
-            for continuation_line in (line + 1)..=end_line {
-                multiline.insert(continuation_line);
-            }
-        }
     }
 
-    (skip_lines, bundle_lines, multiline)
-}
-
-fn is_multiline_string_token(
-    token: &ruff_python_ast::token::Token,
-    tokens: &Tokens,
-    line_index: &LineIndex,
-) -> bool {
-    if token.string_flags().is_none() {
-        return false;
-    }
-    if !token.is_triple_quoted_string() {
-        return false;
-    }
-    let range = token.range();
-    let start_line = line_index.line_index(range.start()).to_zero_indexed();
-    let end_line = line_index
-        .line_index(range.end().saturating_sub(TextSize::new(1)))
-        .to_zero_indexed();
-    if end_line > start_line {
-        return true;
-    }
-
-    // For split interpolated strings, a middle token can be single-line while the full string
-    // spans multiple lines. Detect adjacent string parts that share the same logical string.
-    let before = tokens.before(range.start());
-    let after = tokens.after(range.end());
-    before
-        .last()
-        .is_some_and(|prev| prev.string_flags().is_some() && prev.is_triple_quoted_string())
-        || after
-            .first()
-            .is_some_and(|next| next.string_flags().is_some() && next.is_triple_quoted_string())
+    (skip_lines, bundle_lines)
 }
 
 fn is_skipped_import(line: usize, skip_lines: &SkipDirectives) -> bool {
@@ -305,6 +271,7 @@ fn parse_import_statement(
             must_resolve: false,
             require_parent_packages: true,
             force_bundle,
+            expand_all: false,
         })
         .collect()
 }
@@ -322,6 +289,11 @@ fn parse_from_import_statement(
     let is_relative = node.level > 0;
     let relative_level = usize::try_from(node.level).unwrap_or(0);
 
+    let expand_all = node
+        .names
+        .iter()
+        .filter_map(parse_import_name)
+        .any(|name| name == "*");
     let mut requests = vec![ImportRequest {
         module_name: base_module.clone(),
         line,
@@ -330,6 +302,7 @@ fn parse_from_import_statement(
         must_resolve: is_relative,
         require_parent_packages: true,
         force_bundle,
+        expand_all,
     }];
 
     for alias in &node.names {
@@ -352,6 +325,7 @@ fn parse_from_import_statement(
             must_resolve: false,
             require_parent_packages: true,
             force_bundle,
+            expand_all: false,
         });
     }
 
@@ -415,18 +389,46 @@ fn parse_dynamic_import_call(
             } else {
                 (false, 0usize, false)
             };
-            Ok((
-                vec![ImportRequest {
-                    module_name: name,
-                    line,
-                    is_relative,
-                    relative_level,
-                    must_resolve,
-                    require_parent_packages: true,
-                    force_bundle,
-                }],
-                true,
-            ))
+            let mut requests = vec![ImportRequest {
+                module_name: name,
+                line,
+                is_relative,
+                relative_level,
+                must_resolve,
+                require_parent_packages: true,
+                force_bundle,
+                expand_all: false,
+            }];
+            let fromlist_node = args
+                .keyword
+                .get("fromlist")
+                .copied()
+                .or_else(|| args.positional.get(3).copied());
+            if let Some(fromlist) = fromlist_node.and_then(|node| eval_string_sequence(node, ctx)) {
+                for symbol in fromlist {
+                    if symbol == "*" {
+                        requests[0].expand_all = true;
+                        continue;
+                    }
+                    let base = &requests[0].module_name;
+                    let module_name = if base.is_empty() {
+                        symbol
+                    } else {
+                        format!("{base}.{symbol}")
+                    };
+                    requests.push(ImportRequest {
+                        module_name,
+                        line,
+                        is_relative,
+                        relative_level,
+                        must_resolve: false,
+                        require_parent_packages: true,
+                        force_bundle,
+                        expand_all: false,
+                    });
+                }
+            }
+            Ok((requests, true))
         }
         DynamicImportFunction::ImportModule => {
             let Some(name_node) = args
@@ -470,6 +472,7 @@ fn parse_dynamic_import_call(
                     must_resolve,
                     require_parent_packages: true,
                     force_bundle,
+                    expand_all: false,
                 }],
                 true,
             ))
@@ -526,7 +529,11 @@ fn identify_dynamic_import_function(
                 return None;
             };
             let obj_name = id.as_str();
-            if obj_name == "importlib" || aliases.importlib_modules.contains(obj_name) {
+            if (attr_name == "__import__"
+                && (obj_name == "builtins" || aliases.builtins_modules.contains(obj_name)))
+                || obj_name == "importlib"
+                || aliases.importlib_modules.contains(obj_name)
+            {
                 if attr_name == "__import__" {
                     return Some(DynamicImportFunction::BuiltinImport);
                 }
@@ -557,6 +564,8 @@ fn collect_aliases(module: &ModModule) -> AliasState {
                         }
                         if module_name == "importlib" {
                             self.state.importlib_modules.insert(bound);
+                        } else if module_name == "builtins" {
+                            self.state.builtins_modules.insert(bound);
                         }
                     }
                 }
@@ -612,25 +621,54 @@ fn imported_binding_name(alias: &Alias) -> String {
 
 fn collect_top_level_constants(body: &[Stmt], ctx: &mut EvalContext) {
     for stmt in body {
-        let Stmt::Assign(assign) = stmt else {
-            continue;
-        };
-        for target in &assign.targets {
-            let Expr::Name(name) = target else {
-                continue;
-            };
-            let id = name.id.as_str().to_string();
-            if let Some(value) = eval_string_expr(&assign.value, ctx) {
-                ctx.string_constants.insert(id.clone(), value);
-            } else {
-                ctx.string_constants.remove(&id);
+        match stmt {
+            Stmt::Assign(assign) => {
+                for target in &assign.targets {
+                    let Expr::Name(name) = target else {
+                        continue;
+                    };
+                    record_constant(name.id.as_str(), &assign.value, ctx);
+                }
             }
-            if let Some(value) = eval_int_expr(&assign.value, ctx) {
-                ctx.int_constants.insert(id.clone(), value);
-            } else {
-                ctx.int_constants.remove(&id);
+            Stmt::AnnAssign(assign) => {
+                let (Expr::Name(name), Some(value)) =
+                    (assign.target.as_ref(), assign.value.as_deref())
+                else {
+                    continue;
+                };
+                record_constant(name.id.as_str(), value, ctx);
             }
+            Stmt::AugAssign(assign) if assign.op == Operator::Add => {
+                let Expr::Name(name) = assign.target.as_ref() else {
+                    continue;
+                };
+                let Some(values) = eval_string_sequence(&assign.value, ctx) else {
+                    continue;
+                };
+                ctx.string_sequence_constants
+                    .entry(name.id.as_str().to_string())
+                    .or_default()
+                    .extend(values);
+            }
+            _ => {}
         }
+    }
+}
+
+fn record_constant(id: &str, value: &Expr, ctx: &mut EvalContext) {
+    let string_value = eval_string_expr(value, ctx);
+    let int_value = eval_int_expr(value, ctx);
+    let sequence_value = eval_string_sequence(value, ctx);
+    update_constant(&mut ctx.string_constants, id, string_value);
+    update_constant(&mut ctx.int_constants, id, int_value);
+    update_constant(&mut ctx.string_sequence_constants, id, sequence_value);
+}
+
+fn update_constant<T>(constants: &mut HashMap<String, T>, id: &str, value: Option<T>) {
+    if let Some(value) = value {
+        constants.insert(id.to_string(), value);
+    } else {
+        constants.remove(id);
     }
 }
 
@@ -680,9 +718,40 @@ fn eval_int_expr(node: &Expr, ctx: &EvalContext) -> Option<i32> {
             Number::Int(value) => value.as_i32(),
             _ => None,
         },
+        Expr::BooleanLiteral(expr) => Some(i32::from(expr.value)),
+        Expr::UnaryOp(expr) => match expr.op {
+            UnaryOp::UAdd => eval_int_expr(&expr.operand, ctx),
+            UnaryOp::USub => eval_int_expr(&expr.operand, ctx)?.checked_neg(),
+            _ => None,
+        },
         Expr::Name(expr) => ctx.int_constants.get(expr.id.as_str()).copied(),
         _ => None,
     }
+}
+
+fn eval_string_sequence(node: &Expr, ctx: &EvalContext) -> Option<Vec<String>> {
+    match node {
+        Expr::List(expr) => eval_string_elements(&expr.elts),
+        Expr::Tuple(expr) => eval_string_elements(&expr.elts),
+        Expr::Set(expr) => eval_string_elements(&expr.elts),
+        Expr::Name(expr) => ctx.string_sequence_constants.get(expr.id.as_str()).cloned(),
+        Expr::BinOp(expr) if expr.op == Operator::Add => {
+            let mut values = eval_string_sequence(&expr.left, ctx)?;
+            values.extend(eval_string_sequence(&expr.right, ctx)?);
+            Some(values)
+        }
+        _ => None,
+    }
+}
+
+fn eval_string_elements(elements: &[Expr]) -> Option<Vec<String>> {
+    elements
+        .iter()
+        .map(|element| match element {
+            Expr::StringLiteral(value) => Some(value.value.to_str().to_string()),
+            _ => None,
+        })
+        .collect()
 }
 
 fn resolve_relative_name_with_package_arg(
@@ -701,7 +770,7 @@ fn resolve_relative_name_with_package_arg(
     }
     let tail = &raw_name[level..];
     let parts = package_name.split('.').collect::<Vec<_>>();
-    if level - 1 > parts.len() {
+    if level > parts.len() {
         return Err(format!(
             "relative import {:?} goes beyond top-level package {:?}",
             raw_name, package_name

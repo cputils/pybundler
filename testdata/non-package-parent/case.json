@@ -1,0 +1,4 @@
+{
+  "mustIncludeModules": ["foo", "main"],
+  "mustExcludeModules": ["foo.bar"]
+}

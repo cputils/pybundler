@@ -1,0 +1,4 @@
+{
+  "mustIncludeModules": ["main"],
+  "mustContain": ["_setup"]
+}

@@ -1,0 +1,6 @@
+{
+  "interpreter": ["../zipimport/zip_pkg.zip", "dir"],
+  "mustIncludeModules": ["main", "zip_pkg"],
+  "mustContain": ["from_zip"],
+  "mustNotContain": ["from_dir"]
+}

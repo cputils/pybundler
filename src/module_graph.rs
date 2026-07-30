@@ -1,5 +1,5 @@
 use std::collections::{HashMap, VecDeque};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Component, Path};
 
 use crate::bundler::{ImportedModuleBudget, ModuleData};
 use crate::resolver::ModuleResolver;
@@ -28,45 +28,42 @@ pub(crate) fn ensure_parent_packages(
                 }
                 changed = true;
             }
+            if !existing.is_package {
+                break;
+            }
             continue;
         }
 
-        if let Some(resolved) = resolver
+        let Some(resolved) = resolver
             .resolve_module(&parent)
             .map_err(|err| format!("resolve parent package {:?}: {err}", parent))?
-        {
-            import_budget.track(&parent)?;
-            module_map.insert(
-                parent.clone(),
-                ModuleData {
-                    name: parent.clone(),
-                    file_path: resolved.file_path,
-                    is_package: true,
-                    synthetic: false,
-                    allow_sys_path_imports,
-                    source: Vec::new(),
-                    analysis: None,
-                },
-            );
-            queue.push_back(parent);
-            changed = true;
-            continue;
+        else {
+            break;
+        };
+        if resolved.from_sys_path && !allow_sys_path_imports {
+            break;
         }
-
+        let is_package = resolved.is_package;
         import_budget.track(&parent)?;
         module_map.insert(
             parent.clone(),
             ModuleData {
                 name: parent.clone(),
-                file_path: PathBuf::from(format!("<synthetic:{parent}>")),
-                is_package: true,
-                synthetic: true,
-                allow_sys_path_imports,
+                file_path: resolved.file_path,
+                is_package,
+                synthetic: resolved.synthetic,
+                allow_sys_path_imports: allow_sys_path_imports || resolved.from_sys_path,
                 source: Vec::new(),
                 analysis: None,
             },
         );
+        if !resolved.synthetic {
+            queue.push_back(parent);
+        }
         changed = true;
+        if !is_package {
+            break;
+        }
     }
 
     Ok(changed)

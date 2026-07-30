@@ -1,4 +1,3 @@
 {
-  "mustContain": ["\tdef main():", "\t\tvalue = 1"],
-  "mustNotContain": ["    def main():", "        value = 1"]
+  "mustContain": ["def main():", "\\tvalue = 1"]
 }

@@ -1,0 +1,4 @@
+{
+  "mustIncludeModules": ["main", "pkg"],
+  "mustExcludeModules": ["pkg.virtual"]
+}

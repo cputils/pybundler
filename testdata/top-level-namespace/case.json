@@ -1,0 +1,4 @@
+{
+  "mustIncludeModules": ["main", "namespace_pkg"],
+  "mustBeSynthetic": ["namespace_pkg"]
+}

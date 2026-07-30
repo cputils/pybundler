@@ -1,0 +1,6 @@
+{
+  "interpreter": ["ext_lib"],
+  "mustIncludeModules": ["main", "pkg", "pkg.sub"],
+  "mustContain": ["regular package"],
+  "mustNotContain": ["namespace portion"]
+}

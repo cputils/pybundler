@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::analyzer::{ModuleAnalysis, analyze_module};
+use crate::analyzer::{ImportRequest, ModuleAnalysis, analyze_module};
 use crate::codegen::generate_bundle_code;
 use crate::licenses::collect_license_comments;
 use crate::module_graph::{ensure_parent_packages, module_name_from_path};
@@ -22,10 +22,10 @@ pub struct BundleOptions {
     ///
     /// Defaults to 2048.
     pub max_imported_modules: usize,
-    /// Python interpreters used to discover `sys.path` directories.
+    /// Python interpreters used to discover `sys.path` entries.
     ///
     /// Each interpreter is invoked to print its `sys.path` entries.
-    /// The resulting directories are searched in this order when a
+    /// The resulting directories and ZIP paths are searched in this order when a
     /// module is not found under the project root. Imports resolved from
     /// these directories require a `# bundle` directive; imports discovered
     /// recursively from an admitted module do not.
@@ -190,6 +190,9 @@ pub fn bundle_file(entry_file: &str, opts: BundleOptions) -> Result<BundleResult
     let resolver = ModuleResolver::new(project_root.clone(), sys_path_roots);
     let mut module_map: HashMap<String, ModuleData> = HashMap::new();
     let mut analysis_cache: HashMap<PathBuf, (ModuleAnalysis, Vec<u8>)> = HashMap::new();
+    let mut pending_all_expansions: HashMap<String, bool> = HashMap::new();
+    let mut completed_all_expansions: HashMap<String, bool> = HashMap::new();
+    let mut force_runtime = false;
     let mut queue = VecDeque::from([entry_module.clone()]);
     module_map.insert(
         entry_module.clone(),
@@ -263,7 +266,34 @@ pub fn bundle_file(entry_file: &str, opts: BundleOptions) -> Result<BundleResult
             .analysis
             .ok_or_else(|| format!("internal error: analysis not found for {:?}", current_name))?;
 
-        for req in &analysis.import_requests {
+        let expansion_force = pending_all_expansions.remove(&current_name);
+        if let Some(force_bundle) = expansion_force {
+            completed_all_expansions
+                .entry(current_name.clone())
+                .and_modify(|completed| *completed |= force_bundle)
+                .or_insert(force_bundle);
+        }
+        let mut import_requests = analysis.import_requests;
+        if let Some(force_bundle) = expansion_force {
+            import_requests.extend(
+                analysis
+                    .all_names
+                    .into_iter()
+                    .filter(|name| !name.is_empty() && name != "*")
+                    .map(|name| ImportRequest {
+                        module_name: format!("{}.{}", current_module.name, name),
+                        line: 0,
+                        is_relative: false,
+                        relative_level: 0,
+                        must_resolve: false,
+                        require_parent_packages: true,
+                        force_bundle,
+                        expand_all: false,
+                    }),
+            );
+        }
+
+        for req in &import_requests {
             let mut target_name = req.module_name.clone();
             if req.is_relative {
                 target_name = crate::resolver::resolve_relative_module_name(
@@ -283,6 +313,9 @@ pub fn bundle_file(entry_file: &str, opts: BundleOptions) -> Result<BundleResult
             if !req.force_bundle && should_preserve_external_import(&target_name, &external) {
                 continue;
             }
+            if is_guaranteed_builtin(&target_name) {
+                continue;
+            }
 
             let resolved = resolver.resolve_module(&target_name).map_err(|err| {
                 format!(
@@ -293,6 +326,16 @@ pub fn bundle_file(entry_file: &str, opts: BundleOptions) -> Result<BundleResult
                 )
             })?;
             let Some(resolved) = resolved else {
+                if req.require_parent_packages {
+                    ensure_parent_packages(
+                        &target_name,
+                        &resolver,
+                        &mut module_map,
+                        &mut queue,
+                        &mut import_budget,
+                        current_module.allow_sys_path_imports || req.force_bundle,
+                    )?;
+                }
                 if req.must_resolve {
                     return Err(format!(
                         "failed to resolve import {:?} in {} at line {}",
@@ -307,6 +350,25 @@ pub fn bundle_file(entry_file: &str, opts: BundleOptions) -> Result<BundleResult
             {
                 continue;
             }
+            force_runtime |= resolved.name == entry_module;
+            if req.expand_all && resolved.is_package && !resolved.synthetic {
+                let completed_force = completed_all_expansions
+                    .get(&resolved.name)
+                    .copied()
+                    .unwrap_or(false);
+                let pending_force = pending_all_expansions
+                    .get(&resolved.name)
+                    .copied()
+                    .unwrap_or(false);
+                if (req.force_bundle && !completed_force && !pending_force)
+                    || (!req.force_bundle
+                        && !completed_all_expansions.contains_key(&resolved.name)
+                        && !pending_all_expansions.contains_key(&resolved.name))
+                {
+                    pending_all_expansions.insert(resolved.name.clone(), req.force_bundle);
+                    queue.push_back(resolved.name.clone());
+                }
+            }
 
             let mut changed = false;
             if !module_map.contains_key(&resolved.name) {
@@ -317,14 +379,16 @@ pub fn bundle_file(entry_file: &str, opts: BundleOptions) -> Result<BundleResult
                         name: resolved.name.clone(),
                         file_path: resolved.file_path.clone(),
                         is_package: resolved.is_package,
-                        synthetic: false,
+                        synthetic: resolved.synthetic,
                         allow_sys_path_imports: current_module.allow_sys_path_imports
                             || resolved.from_sys_path,
                         source: Vec::new(),
                         analysis: None,
                     },
                 );
-                queue.push_back(resolved.name.clone());
+                if !resolved.synthetic {
+                    queue.push_back(resolved.name.clone());
+                }
                 changed = true;
             } else if current_module.allow_sys_path_imports
                 && let Some(existing) = module_map.get_mut(&resolved.name)
@@ -348,6 +412,15 @@ pub fn bundle_file(entry_file: &str, opts: BundleOptions) -> Result<BundleResult
         }
     }
 
+    if opts.format {
+        for module in module_map.values_mut().filter(|module| !module.synthetic) {
+            let source = String::from_utf8_lossy(&module.source);
+            if let Ok(printed) = format_module_source(&source, PyFormatOptions::default()) {
+                module.source = printed.into_code().into_bytes();
+            }
+        }
+    }
+
     // Build sorted module list to match codegen order
     let sorted_modules = {
         let mut names: Vec<String> = module_map.keys().cloned().collect();
@@ -361,13 +434,20 @@ pub fn bundle_file(entry_file: &str, opts: BundleOptions) -> Result<BundleResult
     // Build map of module name -> formatted license header strings
     let mut license_headers: HashMap<String, Vec<String>> = HashMap::new();
     for comment in &license_comments {
-        let escaped = comment.text.replace("\"\"\"", "\"\"\\\"");
-        let header = format!(
-            "\"\"\"\n===== {} {} =====\n\n{}\n\"\"\"\n\n",
-            comment.package_name,
-            comment.version,
-            escaped.trim_matches(|c| c == '\n' || c == '\r')
+        let mut header = format!(
+            "# ===== {} {} =====\n#\n",
+            comment.package_name, comment.version
         );
+        for line in comment
+            .text
+            .trim_matches(|c| c == '\n' || c == '\r')
+            .lines()
+        {
+            header.push_str("# ");
+            header.push_str(line);
+            header.push('\n');
+        }
+        header.push('\n');
         license_headers
             .entry(comment.target_module.clone())
             .or_default()
@@ -379,7 +459,12 @@ pub fn bundle_file(entry_file: &str, opts: BundleOptions) -> Result<BundleResult
         .cloned()
         .ok_or_else(|| format!("internal error: entry module {:?} missing", entry_module))?;
 
-    let mut code = generate_bundle_code(&entry_module_data, &module_map, &license_headers);
+    let mut code = generate_bundle_code(
+        &entry_module_data,
+        &module_map,
+        &license_headers,
+        force_runtime,
+    );
     if opts.format {
         code = format_module_source(&code, PyFormatOptions::default())
             .map(|printed| printed.into_code())
@@ -447,4 +532,11 @@ fn should_preserve_external_import(module_name: &str, external: &HashSet<String>
     }
     let first = module_name.split('.').next().unwrap_or_default();
     external.contains(first)
+}
+
+fn is_guaranteed_builtin(module_name: &str) -> bool {
+    matches!(
+        module_name.split('.').next().unwrap_or_default(),
+        "builtins" | "sys" | "_imp"
+    )
 }

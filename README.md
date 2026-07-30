@@ -9,15 +9,17 @@ Think of it like Webpack or Rollup, but for Python.
 ## How it works
 
 1. You provide an entry `.py` file.
-2. pybundler parses the file and follows every local `import` / `from ... import` statement, building a dependency graph.
-3. It inlines all local modules into a single output script, complete with a lightweight import runtime so `__name__`, `__package__`, and `sys.modules` work correctly.
+2. pybundler parses the file and follows every local `import` / `from ... import` statement, building a dependency graph with CPython-compatible package and path-entry precedence.
+3. It embeds every source module into a single output script and compiles each one independently, preserving module docstrings, `__future__` flags, source locations, package metadata, and circular-import behavior.
 4. The generated script runs on its own with no other files needed.
 
 ## Features
 
 - Handles all standard import syntax: `import X`, `from X import Y`, aliases, relative imports, wildcard imports
-- Supports dynamic imports via `__import__()` and `importlib.import_module()` (when the argument is a compile-time constant)
-- Resolves modules from the filesystem and from `.zip` / `.egg` archives
+- Supports dynamic imports via `__import__()` and `importlib.import_module()` when their arguments are compile-time constants, including static `fromlist` values
+- Expands statically declared package `__all__` values for wildcard imports
+- Resolves modules from the filesystem and from ZIP-based path entries regardless of archive extension or internal prefix
+- Preserves CPython search precedence across regular packages, namespace packages, modules, directories, and ZIP path entries
 - Exclude specific packages from bundling (they remain normal runtime imports)
 - Skip individual imports with a `# no-bundle` comment directive
 - Force-bundle packages listed as external with a `# bundle` comment directive
@@ -26,8 +28,11 @@ Think of it like Webpack or Rollup, but for Python.
 - Automatically collects and embeds license texts from third-party packages
 - Supports namespace packages by synthesizing missing `__init__.py` parents
 - Queries Python interpreters to discover `sys.path` for accurate module resolution
+- Supports UTF-8 BOMs and PEP 263 source declarations for UTF-8, ASCII, and Latin-1
 - Removes unused imports from bundled modules
 - Formats the bundled output with Ruff
+
+Native extension modules, sourceless bytecode modules, and source files using interpreter-registered codecs other than UTF-8, ASCII, or Latin-1 remain runtime dependencies because reproducing them requires the target Python interpreter or platform.
 
 ## Usage
 

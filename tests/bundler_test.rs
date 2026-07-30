@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -260,11 +261,7 @@ fn check_runtime_output(scenario_path: &Path, project_root: &Path, scenario: &Bu
     for name in &scenario.interpreter {
         python_paths.push(project_root.join(name));
     }
-    let python_path = python_paths
-        .iter()
-        .map(|p| p.display().to_string())
-        .collect::<Vec<_>>()
-        .join(":");
+    let python_path = std::env::join_paths(&python_paths).expect("build PYTHONPATH");
 
     let entry_path = project_root.join(&scenario.entry);
     let bundle_path = project_root.join("bundled.py");
@@ -291,7 +288,7 @@ fn check_runtime_output(scenario_path: &Path, project_root: &Path, scenario: &Bu
     );
 }
 
-fn run_python(script: &Path, python_path: Option<&str>) -> Output {
+fn run_python(script: &Path, python_path: Option<&OsStr>) -> Output {
     let mut cmd = Command::new("python");
     cmd.arg(script);
     if let Some(path) = python_path {
