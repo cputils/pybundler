@@ -10,6 +10,7 @@ pub(crate) fn ensure_parent_packages(
     module_map: &mut HashMap<String, ModuleData>,
     queue: &mut VecDeque<String>,
     import_budget: &mut ImportedModuleBudget,
+    allow_sys_path_imports: bool,
 ) -> Result<bool, String> {
     let parts = module_name.split('.').collect::<Vec<_>>();
     if parts.len() < 2 {
@@ -19,7 +20,14 @@ pub(crate) fn ensure_parent_packages(
     let mut changed = false;
     for i in 1..parts.len() {
         let parent = parts[..i].join(".");
-        if module_map.contains_key(&parent) {
+        if let Some(existing) = module_map.get_mut(&parent) {
+            if allow_sys_path_imports && !existing.allow_sys_path_imports {
+                existing.allow_sys_path_imports = true;
+                if !existing.synthetic {
+                    queue.push_back(parent);
+                }
+                changed = true;
+            }
             continue;
         }
 
@@ -35,6 +43,7 @@ pub(crate) fn ensure_parent_packages(
                     file_path: resolved.file_path,
                     is_package: true,
                     synthetic: false,
+                    allow_sys_path_imports,
                     source: Vec::new(),
                     analysis: None,
                 },
@@ -52,6 +61,7 @@ pub(crate) fn ensure_parent_packages(
                 file_path: PathBuf::from(format!("<synthetic:{parent}>")),
                 is_package: true,
                 synthetic: true,
+                allow_sys_path_imports,
                 source: Vec::new(),
                 analysis: None,
             },

@@ -20,7 +20,8 @@ Think of it like Webpack or Rollup, but for Python.
 - Resolves modules from the filesystem and from `.zip` / `.egg` archives
 - Exclude specific packages from bundling (they remain normal runtime imports)
 - Skip individual imports with a `# no-bundle` comment directive
-- Force-bundle externals with a `# bundle` comment directive
+- Force-bundle packages listed as external with a `# bundle` comment directive
+- Bundle imports resolved through interpreter `sys.path` only when marked with a `# bundle` comment directive; their transitive imports are included automatically
 - Safety limit on the number of modules to bundle (prevents runaway graphs)
 - Automatically collects and embeds license texts from third-party packages
 - Supports namespace packages by synthesizing missing `__init__.py` parents
@@ -48,13 +49,13 @@ std::fs::write("bundled.py", result.code)?;
 
 ### Options
 
-| Option                 | Description                                            | Default |
-| ---------------------- | ------------------------------------------------------ | ------- |
-| `external`             | Package names to keep as runtime imports (not bundled) | `[]`    |
-| `max_imported_modules` | Maximum number of modules to bundle                    | `2048`  |
-| `interpreter`          | Python interpreter paths used to discover `sys.path`   | `[]`    |
-| `tree_shaking`         | Remove unused imports from bundled output              | `true`  |
-| `format`               | Format bundled output                                  | `false` |
+| Option                 | Description                                                    | Default |
+| ---------------------- | -------------------------------------------------------------- | ------- |
+| `external`             | Package names to keep as runtime imports (not bundled)         | `[]`    |
+| `max_imported_modules` | Maximum number of modules to bundle                            | `2048`  |
+| `interpreter`          | Python interpreters used to discover opt-in `sys.path` imports | `[]`    |
+| `tree_shaking`         | Remove unused imports from bundled output                      | `true`  |
+| `format`               | Format bundled output                                          | `false` |
 
 ## License
 

@@ -1,3 +1,3 @@
-import pkg
+import pkg  # bundle
 
 print(pkg.VALUE)

@@ -26,7 +26,9 @@ pub struct BundleOptions {
     ///
     /// Each interpreter is invoked to print its `sys.path` entries.
     /// The resulting directories are searched in this order when a
-    /// module is not found under the project root.
+    /// module is not found under the project root. Imports resolved from
+    /// these directories require a `# bundle` directive; imports discovered
+    /// recursively from an admitted module do not.
     ///
     /// When empty, no `sys.path` discovery is performed.
     pub interpreter: Vec<String>,
@@ -84,6 +86,7 @@ pub(crate) struct ModuleData {
     pub file_path: PathBuf,
     pub is_package: bool,
     pub synthetic: bool,
+    pub allow_sys_path_imports: bool,
     pub source: Vec<u8>,
     pub analysis: Option<ModuleAnalysis>,
 }
@@ -118,6 +121,10 @@ impl ImportedModuleBudget {
 /// Imports can be controlled with [`BundleOptions`]:
 /// - `external`: keeps selected top-level packages as runtime imports instead of bundling.
 /// - `max_imported_modules`: protects against runaway dependency expansion.
+///
+/// Imports resolved through an interpreter's `sys.path` require a `# bundle`
+/// directive at the project boundary. Their transitive imports are bundled
+/// recursively without requiring additional directives.
 ///
 /// # Errors
 ///
@@ -177,9 +184,10 @@ pub fn bundle_file(entry_file: &str, opts: BundleOptions) -> Result<BundleResult
 
     let (entry_module, entry_is_package) = module_name_from_path(&project_root, &abs_entry)?;
 
+    let sys_path_roots = discover_sys_paths(&opts.interpreter);
     let mut search_roots = vec![project_root.clone()];
-    search_roots.extend(discover_sys_paths(&opts.interpreter));
-    let resolver = ModuleResolver::new(search_roots.clone());
+    search_roots.extend(sys_path_roots.iter().cloned());
+    let resolver = ModuleResolver::new(project_root.clone(), sys_path_roots);
     let mut module_map: HashMap<String, ModuleData> = HashMap::new();
     let mut analysis_cache: HashMap<PathBuf, (ModuleAnalysis, Vec<u8>)> = HashMap::new();
     let mut queue = VecDeque::from([entry_module.clone()]);
@@ -190,6 +198,7 @@ pub fn bundle_file(entry_file: &str, opts: BundleOptions) -> Result<BundleResult
             file_path: abs_entry.clone(),
             is_package: entry_is_package,
             synthetic: false,
+            allow_sys_path_imports: false,
             source: Vec::new(),
             analysis: None,
         },
@@ -294,6 +303,10 @@ pub fn bundle_file(entry_file: &str, opts: BundleOptions) -> Result<BundleResult
                 }
                 continue;
             };
+            if resolved.from_sys_path && !req.force_bundle && !current_module.allow_sys_path_imports
+            {
+                continue;
+            }
 
             let mut changed = false;
             if !module_map.contains_key(&resolved.name) {
@@ -305,10 +318,19 @@ pub fn bundle_file(entry_file: &str, opts: BundleOptions) -> Result<BundleResult
                         file_path: resolved.file_path.clone(),
                         is_package: resolved.is_package,
                         synthetic: false,
+                        allow_sys_path_imports: current_module.allow_sys_path_imports
+                            || resolved.from_sys_path,
                         source: Vec::new(),
                         analysis: None,
                     },
                 );
+                queue.push_back(resolved.name.clone());
+                changed = true;
+            } else if current_module.allow_sys_path_imports
+                && let Some(existing) = module_map.get_mut(&resolved.name)
+                && !existing.allow_sys_path_imports
+            {
+                existing.allow_sys_path_imports = true;
                 queue.push_back(resolved.name.clone());
                 changed = true;
             }
@@ -320,6 +342,7 @@ pub fn bundle_file(entry_file: &str, opts: BundleOptions) -> Result<BundleResult
                     &mut module_map,
                     &mut queue,
                     &mut import_budget,
+                    current_module.allow_sys_path_imports || resolved.from_sys_path,
                 )?;
             }
         }

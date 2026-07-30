@@ -15,28 +15,31 @@ pub(crate) struct ResolvedModule {
     pub name: String,
     pub file_path: PathBuf,
     pub is_package: bool,
+    pub from_sys_path: bool,
 }
 
 #[derive(Debug)]
 pub(crate) struct ModuleResolver {
-    dir_roots: Vec<PathBuf>,
-    zip_roots: Vec<PathBuf>,
+    dir_roots: Vec<(PathBuf, bool)>,
+    zip_roots: Vec<(PathBuf, bool)>,
     zip_name_cache: RefCell<Vec<HashSet<String>>>,
 }
 
 impl ModuleResolver {
-    pub(crate) fn new(search_roots: Vec<PathBuf>) -> Self {
+    pub(crate) fn new(project_root: PathBuf, sys_path_roots: Vec<PathBuf>) -> Self {
         let mut dir_roots = Vec::new();
         let mut zip_roots = Vec::new();
-        for root in search_roots {
+        for (root, from_sys_path) in std::iter::once((project_root, false))
+            .chain(sys_path_roots.into_iter().map(|p| (p, true)))
+        {
             if root.as_os_str().is_empty() {
                 continue;
             }
             let clean = root.components().collect::<PathBuf>();
             if clean.is_dir() {
-                dir_roots.push(clean);
+                dir_roots.push((clean, from_sys_path));
             } else if is_importable_zip(&clean) {
-                zip_roots.push(clean);
+                zip_roots.push((clean, from_sys_path));
             }
         }
         Self {
@@ -59,7 +62,7 @@ impl ModuleResolver {
             return Err(format!("invalid module name {:?}", module_name));
         }
 
-        for root in &self.dir_roots {
+        for (root, from_sys_path) in &self.dir_roots {
             let mut base = root.clone();
             for part in &parts {
                 base.push(part);
@@ -71,6 +74,7 @@ impl ModuleResolver {
                     name: module_name.to_string(),
                     file_path: init_file,
                     is_package: true,
+                    from_sys_path: *from_sys_path,
                 }));
             }
 
@@ -80,6 +84,7 @@ impl ModuleResolver {
                     name: module_name.to_string(),
                     file_path: module_file,
                     is_package: false,
+                    from_sys_path: *from_sys_path,
                 }));
             }
         }
@@ -98,7 +103,7 @@ impl ModuleResolver {
         internal_path: &str,
     ) -> Result<Option<ResolvedModule>, String> {
         let mut cache = self.zip_name_cache.borrow_mut();
-        for (idx, zip_root) in self.zip_roots.iter().enumerate() {
+        for (idx, (zip_root, from_sys_path)) in self.zip_roots.iter().enumerate() {
             if cache.len() <= idx {
                 let names = match File::open(zip_root)
                     .ok()
@@ -117,6 +122,7 @@ impl ModuleResolver {
                     name: module_name.to_string(),
                     file_path: PathBuf::from(file_path),
                     is_package: true,
+                    from_sys_path: *from_sys_path,
                 }));
             }
 
@@ -127,6 +133,7 @@ impl ModuleResolver {
                     name: module_name.to_string(),
                     file_path: PathBuf::from(file_path),
                     is_package: false,
+                    from_sys_path: *from_sys_path,
                 }));
             }
         }
