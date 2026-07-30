@@ -10,7 +10,7 @@ Think of it like Webpack or Rollup, but for Python.
 
 1. You provide an entry `.py` file.
 2. pybundler parses the file and follows every local `import` / `from ... import` statement, building a dependency graph with CPython-compatible package and path-entry precedence.
-3. It embeds every source module into a single output script and compiles each one independently, preserving module docstrings, `__future__` flags, source locations, package metadata, and circular-import behavior.
+3. It writes every module as a readable `if __name__ == "...":` source block, followed by a lightweight import runtime that preserves package metadata and circular-import behavior.
 4. The generated script runs on its own with no other files needed.
 
 ## Features
@@ -29,6 +29,7 @@ Think of it like Webpack or Rollup, but for Python.
 - Supports namespace packages by synthesizing missing `__init__.py` parents
 - Queries Python interpreters to discover `sys.path` for accurate module resolution
 - Supports UTF-8 BOMs and PEP 263 source declarations for UTF-8, ASCII, and Latin-1
+- Hoists bundled modules' `__future__` imports so the readable combined script remains valid Python
 - Removes unused imports from bundled modules
 - Formats the bundled output with Ruff
 

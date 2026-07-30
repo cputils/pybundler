@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use ruff_python_ast::visitor::{self, Visitor};
 use ruff_python_ast::{
     Alias, Expr, ExprAttribute, ExprCall, ExprName, ModModule, Number, Operator, Stmt, UnaryOp,
-    token::TokenKind,
+    token::{TokenKind, Tokens},
 };
 use ruff_python_parser::{Parsed, parse_module};
 use ruff_source_file::{LineIndex, OneIndexed};
@@ -28,6 +28,10 @@ pub(crate) struct ImportRequest {
 pub(crate) struct ModuleAnalysis {
     pub import_requests: Vec<ImportRequest>,
     pub all_names: Vec<String>,
+    pub docstring: Option<String>,
+    pub future_features: HashSet<String>,
+    pub future_import_lines: HashSet<usize>,
+    pub multiline_string_continuation_lines: HashSet<usize>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -71,7 +75,8 @@ pub(crate) fn analyze_module(mod_data: &ModuleData) -> Result<ModuleAnalysis, St
         string_sequence_constants: HashMap::new(),
     };
     collect_top_level_constants(&module.body, &mut ctx);
-    let (skip_lines, bundle_lines) = collect_source_metadata(&source, &parsed, &line_index);
+    let (skip_lines, bundle_lines, multiline_lines) =
+        collect_source_metadata(&source, &parsed, &line_index);
 
     // Detect conflict between bundle and no-bundle directives
     for line in 0..source.lines().count() {
@@ -90,6 +95,16 @@ pub(crate) fn analyze_module(mod_data: &ModuleData) -> Result<ModuleAnalysis, St
         .get("__all__")
         .cloned()
         .unwrap_or_default();
+    let docstring = module.body.first().and_then(|stmt| {
+        let Stmt::Expr(expr) = stmt else {
+            return None;
+        };
+        let Expr::StringLiteral(value) = expr.value.as_ref() else {
+            return None;
+        };
+        Some(value.value.to_str().to_string())
+    });
+    let (future_features, future_import_lines) = collect_future_imports(&module.body, &line_index);
 
     let mut collector = ImportCollector {
         requests: Vec::new(),
@@ -110,6 +125,10 @@ pub(crate) fn analyze_module(mod_data: &ModuleData) -> Result<ModuleAnalysis, St
     Ok(ModuleAnalysis {
         import_requests: collector.requests,
         all_names,
+        docstring,
+        future_features,
+        future_import_lines,
+        multiline_string_continuation_lines: multiline_lines,
     })
 }
 
@@ -199,9 +218,10 @@ fn collect_source_metadata(
     source: &str,
     parsed: &Parsed<ModModule>,
     line_index: &LineIndex,
-) -> (SkipDirectives, SkipDirectives) {
+) -> (SkipDirectives, SkipDirectives, HashSet<usize>) {
     let mut skip_lines = SkipDirectives::default();
     let mut bundle_lines = SkipDirectives::default();
+    let mut multiline = HashSet::new();
     let skip_needle = "no-bundle";
 
     for token in parsed.tokens() {
@@ -236,9 +256,70 @@ fn collect_source_metadata(
                 }
             }
         }
+
+        if is_multiline_string_token(token, parsed.tokens(), line_index) {
+            let end_line = line_index
+                .line_index(token_range.end().saturating_sub(TextSize::new(1)))
+                .to_zero_indexed();
+            for continuation_line in (line + 1)..=end_line {
+                multiline.insert(continuation_line);
+            }
+        }
     }
 
-    (skip_lines, bundle_lines)
+    (skip_lines, bundle_lines, multiline)
+}
+
+fn is_multiline_string_token(
+    token: &ruff_python_ast::token::Token,
+    tokens: &Tokens,
+    line_index: &LineIndex,
+) -> bool {
+    if token.string_flags().is_none() || !token.is_triple_quoted_string() {
+        return false;
+    }
+    let range = token.range();
+    let start_line = line_index.line_index(range.start()).to_zero_indexed();
+    let end_line = line_index
+        .line_index(range.end().saturating_sub(TextSize::new(1)))
+        .to_zero_indexed();
+    if end_line > start_line {
+        return true;
+    }
+
+    let before = tokens.before(range.start());
+    let after = tokens.after(range.end());
+    before
+        .last()
+        .is_some_and(|prev| prev.string_flags().is_some() && prev.is_triple_quoted_string())
+        || after
+            .first()
+            .is_some_and(|next| next.string_flags().is_some() && next.is_triple_quoted_string())
+}
+
+fn collect_future_imports(
+    body: &[Stmt],
+    line_index: &LineIndex,
+) -> (HashSet<String>, HashSet<usize>) {
+    let mut features = HashSet::new();
+    let mut lines = HashSet::new();
+    for stmt in body {
+        let Stmt::ImportFrom(import) = stmt else {
+            continue;
+        };
+        if import.module.as_ref().map(|name| name.as_str()) != Some("__future__") {
+            continue;
+        }
+        features.extend(import.names.iter().filter_map(parse_import_name));
+        let start = line_index
+            .line_index(import.range.start())
+            .to_zero_indexed();
+        let end = line_index
+            .line_index(import.range.end().saturating_sub(TextSize::new(1)))
+            .to_zero_indexed();
+        lines.extend(start..=end);
+    }
+    (features, lines)
 }
 
 fn is_skipped_import(line: usize, skip_lines: &SkipDirectives) -> bool {

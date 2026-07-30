@@ -5,5 +5,13 @@
     "import app.runner",
     "from vendor.tool import helper"
   ],
+  "mustAppearInOrder": [
+    "if __name__ == \"main\"",
+    "if __name__ == \"app\"",
+    "if __name__ == \"app.runner\"",
+    "if __name__ == \"vendor\"",
+    "if __name__ == \"vendor.tool\"",
+    "if not globals().get(\"_COLLECTING\")"
+  ],
   "mustIncludeModules": ["app", "app.runner", "main", "vendor", "vendor.tool"]
 }

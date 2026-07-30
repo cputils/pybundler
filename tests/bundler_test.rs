@@ -32,6 +32,8 @@ struct BundleScenario {
     must_not_contain: Vec<String>,
     #[serde(rename = "mustContainCount")]
     must_contain_count: HashMap<String, usize>,
+    #[serde(rename = "mustAppearInOrder")]
+    must_appear_in_order: Vec<String>,
     interpreter: Vec<String>,
     #[serde(rename = "treeShaking")]
     tree_shaking: Option<bool>,
@@ -172,6 +174,13 @@ fn execute_scenario(scenario_path: &Path, project_root: &Path, scenario: &Bundle
             "expected {:?} to appear {} times, got {}",
             token, expected, actual
         );
+    }
+    let mut offset = 0;
+    for token in &scenario.must_appear_in_order {
+        let Some(index) = result.code[offset..].find(token) else {
+            panic!("expected bundled code to contain {token:?} after byte {offset}");
+        };
+        offset += index + token.len();
     }
 
     if !scenario.skip_output_check {
