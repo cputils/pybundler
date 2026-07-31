@@ -27,11 +27,18 @@ pub struct BundleOptions {
     /// Each interpreter is invoked to print its `sys.path` entries.
     /// The resulting directories and ZIP paths are searched in this order when a
     /// module is not found under the project root. Imports resolved from
-    /// these directories require a `# bundle` directive; imports discovered
-    /// recursively from an admitted module do not.
+    /// these directories require a `# bundle` directive by default; set
+    /// [`BundleOptions::require_bundle_directive`] to `false` to disable this
+    /// requirement. Imports discovered recursively from an admitted module do
+    /// not require a directive.
     ///
     /// When empty, no `sys.path` discovery is performed.
     pub interpreter: Vec<String>,
+    /// Whether imports resolved through an interpreter's `sys.path` require a
+    /// `# bundle` directive.
+    ///
+    /// Defaults to `true`.
+    pub require_bundle_directive: bool,
     /// Whether to remove unused imports from the bundled output.
     ///
     /// Imports marked with `# bundle` are preserved.
@@ -50,6 +57,7 @@ impl Default for BundleOptions {
             external: Vec::new(),
             max_imported_modules: DEFAULT_MAX_IMPORTED_MODULES,
             interpreter: Vec::new(),
+            require_bundle_directive: true,
             tree_shaking: true,
             format: false,
         }
@@ -125,7 +133,9 @@ impl ImportedModuleBudget {
 /// - `max_imported_modules`: protects against runaway dependency expansion.
 ///
 /// Imports resolved through an interpreter's `sys.path` require a `# bundle`
-/// directive at the project boundary. Their transitive imports are bundled
+/// directive at the project boundary by default. Set
+/// [`BundleOptions::require_bundle_directive`] to `false` to include them
+/// without the directive. Transitive imports of an admitted module are bundled
 /// recursively without requiring additional directives.
 ///
 /// # Errors
@@ -179,6 +189,7 @@ pub fn bundle_file(entry_file: &str, opts: BundleOptions) -> Result<BundleResult
     let external = normalize_external_prefixes(&opts.external);
     let max_imported_modules = opts.max_imported_modules;
     let tree_shaking_enabled = opts.tree_shaking;
+    let allow_sys_path_imports = !opts.require_bundle_directive;
     let mut import_budget = ImportedModuleBudget {
         max_imported_modules,
         imported_count: 0,
@@ -203,7 +214,7 @@ pub fn bundle_file(entry_file: &str, opts: BundleOptions) -> Result<BundleResult
             file_path: abs_entry.clone(),
             is_package: entry_is_package,
             synthetic: false,
-            allow_sys_path_imports: false,
+            allow_sys_path_imports,
             source: Vec::new(),
             analysis: None,
         },

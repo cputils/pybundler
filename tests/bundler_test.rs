@@ -35,6 +35,8 @@ struct BundleScenario {
     #[serde(rename = "mustAppearInOrder")]
     must_appear_in_order: Vec<String>,
     interpreter: Vec<String>,
+    #[serde(rename = "requireBundleDirective")]
+    require_bundle_directive: Option<bool>,
     #[serde(rename = "treeShaking")]
     tree_shaking: Option<bool>,
     #[serde(rename = "format")]
@@ -96,6 +98,7 @@ fn execute_scenario(scenario_path: &Path, project_root: &Path, scenario: &Bundle
             external: scenario.external.clone(),
             max_imported_modules: scenario.max_imported_modules,
             interpreter,
+            require_bundle_directive: scenario.require_bundle_directive.unwrap_or(true),
             tree_shaking: scenario.tree_shaking.unwrap_or(false),
             format: scenario.format.unwrap_or(false),
         },

@@ -1,0 +1,6 @@
+{
+  "interpreter": ["ext_lib"],
+  "requireBundleDirective": false,
+  "mustIncludeModules": ["pkg1", "pkg2"],
+  "mustContain": ["VALUE = 1"]
+}
