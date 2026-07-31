@@ -2,94 +2,137 @@
 
 ![Badge](https://github.com/cputils/pybundler/actions/workflows/ci.yml/badge.svg)
 
-**pybundler** is a Python module bundler. It takes a Python entry file and recursively resolves all of its local import dependencies, then generates a single self-contained Python script that can be run standalone.
+**pybundler** bundles a Python entry file and its local dependencies into a single, standalone Python script.
 
-Think of it like Webpack or Rollup, but for Python.
+## Quick start
 
-## How it works
-
-1. You provide an entry `.py` file.
-2. pybundler parses the file and follows every local `import` / `from ... import` statement, building a dependency graph with CPython-compatible package and path-entry precedence.
-3. It writes every module as a readable `if __name__ == "...":` source block, followed by a lightweight import runtime that preserves package metadata and circular-import behavior.
-4. The generated script runs on its own with no other files needed.
-
-## Features
-
-- Handles all standard import syntax: `import X`, `from X import Y`, aliases, relative imports, wildcard imports
-- Supports dynamic imports via `__import__()` and `importlib.import_module()` when their arguments are compile-time constants, including static `fromlist` values
-- Expands statically declared package `__all__` values for wildcard imports
-- Resolves modules from the filesystem and from ZIP-based path entries regardless of archive extension or internal prefix
-- Preserves CPython search precedence across regular packages, namespace packages, modules, directories, and ZIP path entries
-- Exclude specific packages from bundling (they remain normal runtime imports)
-- Skip individual imports with a `# no-bundle` comment directive
-- Force-bundle packages listed as external with a `# bundle` comment directive
-- Bundle imports resolved through interpreter `sys.path` only when marked with a `# bundle` comment directive by default; this requirement can be disabled with an option
-- Safety limit on the number of modules to bundle (prevents runaway graphs)
-- Automatically collects and embeds license texts from third-party packages
-- Supports namespace packages by synthesizing missing `__init__.py` parents
-- Queries Python interpreters to discover `sys.path` for accurate module resolution
-- Supports UTF-8 BOMs and PEP 263 source declarations for UTF-8, ASCII, and Latin-1
-- Hoists bundled modules' `__future__` imports so the readable combined script remains valid Python
-- Removes unused imports from bundled modules, except imports marked with `# bundle`
-- Formats the bundled output with Ruff
-
-Native extension modules, sourceless bytecode modules, and source files using interpreter-registered codecs other than UTF-8, ASCII, or Latin-1 remain runtime dependencies because reproducing them requires the target Python interpreter or platform.
-
-## Installation
-
-Install the `pybundler` command from the repository with Cargo:
+Install the `pybundler` command from the repository:
 
 ```sh
 cargo install --git https://github.com/cputils/pybundler pybundler
 ```
 
-## CLI usage
+Bundle a program:
 
-Bundle an entry file to standard output:
+```sh
+pybundler src/main.py --output bundled.py
+python bundled.py
+```
+
+Without `--output`, the generated script is written to standard output:
 
 ```sh
 pybundler src/main.py > bundled.py
 ```
 
-Alternatively, specify an output file and bundling options directly:
+Use `pybundler --help` to see every option.
+
+## Detailed reference
+
+### How bundling works
+
+1. pybundler parses the entry file and recursively follows its local imports.
+2. It resolves those imports using CPython-compatible package and path-entry precedence.
+3. It emits each bundled module as a readable `if __name__ == "...":` source block and adds a lightweight import runtime.
+4. The resulting script runs without the bundled source files.
+
+The generated runtime preserves package metadata and circular-import behavior. Missing `__init__.py` parents for namespace packages are synthesized when necessary.
+
+### Supported imports and module resolution
+
+pybundler supports:
+
+- `import`, `from ... import`, aliases, relative imports, and wildcard imports
+- `__import__()` and `importlib.import_module()` when their arguments are compile-time constants, including static `fromlist` values
+- wildcard imports from packages with a statically declared `__all__`
+- regular packages, namespace packages, modules, directories, and ZIP-based path entries
+- ZIP path entries with any archive extension and with an internal path prefix
+- CPython search precedence across all supported module and path-entry types
+
+By default, resolution starts at the entry file's directory. Each `--interpreter` value is invoked to discover additional `sys.path` entries. An import resolved from one of those entries must have a `# bundle` directive at the project boundary unless `--no-require-bundle-directive` is used. Once admitted, its transitive imports are bundled without additional directives.
+
+Imports whose top-level package is passed with `--external` remain runtime imports. A `# bundle` directive on an individual import overrides that setting, while `# no-bundle` prevents that import from being bundled.
+
+### Import controls
+
+Keep a package as a normal runtime dependency instead of bundling it:
 
 ```sh
-pybundler src/main.py --output bundled.py \
-  --external numpy \
-  --interpreter python3 \
-  --format
+pybundler src/main.py --output bundled.py --external numpy
 ```
 
-Use `pybundler --help` to see all options. `--external` and `--interpreter` may each be repeated.
+Bundle a package installed for a particular Python interpreter by marking its import with `# bundle` and specifying that interpreter:
 
-## Library usage
+```python
+import some_package  # bundle
+```
 
-pybundler can also be used as a Rust library. Add it to your `Cargo.toml`:
+```sh
+pybundler src/main.py --output bundled.py --interpreter python3
+```
+
+Add `# no-bundle` to an import when it should remain a normal runtime import:
+
+```python
+import another_package  # no-bundle
+```
+
+### Source processing and output
+
+- Unused imports are removed by default; imports marked with `# bundle` are preserved.
+- `--no-tree-shaking` keeps unused imports.
+- Bundled modules' `__future__` imports are hoisted so the combined script remains valid Python.
+- UTF-8 BOMs and PEP 263 declarations for UTF-8, ASCII, and Latin-1 are supported.
+- License texts discovered in bundled third-party packages are embedded automatically.
+- `--format` formats the generated script with Ruff.
+- `--max-imported-modules` limits dependency-graph expansion and defaults to `2048`.
+
+Native extension modules, sourceless bytecode modules, and source files using interpreter-registered codecs other than UTF-8, ASCII, or Latin-1 remain runtime dependencies. Reproducing them requires the target Python interpreter or platform.
+
+### CLI options
+
+Options marked as repeatable may be supplied more than once.
+
+| Option                           | Description                                                | Default         |
+| -------------------------------- | ---------------------------------------------------------- | --------------- |
+| `-o, --output <FILE>`            | Write the bundle to a file instead of standard output      | standard output |
+| `-e, --external <PACKAGE>`       | Keep a top-level package as a runtime import; repeatable   | none            |
+| `--max-imported-modules <COUNT>` | Limit the number of imported modules bundled               | `2048`          |
+| `-i, --interpreter <COMMAND>`    | Discover `sys.path` using a Python interpreter; repeatable | none            |
+| `--no-require-bundle-directive`  | Bundle imports found through `sys.path` without `# bundle` | disabled        |
+| `--no-tree-shaking`              | Keep unused imports in bundled modules                     | disabled        |
+| `--format`                       | Format the generated bundle with Ruff                      | disabled        |
+
+### Rust library
+
+Add pybundler to `Cargo.toml`:
 
 ```toml
 [dependencies]
 pybundler = { git = "https://github.com/cputils/pybundler", tag = "<version>" }
 ```
 
-Then use it in your code:
+Then call `bundle_file`:
 
 ```rust
-use pybundler::{bundle_file, BundleOptions};
+use pybundler::{BundleOptions, bundle_file};
 
 let result = bundle_file("src/main.py", BundleOptions::default())?;
 std::fs::write("bundled.py", result.code)?;
 ```
 
-### Options
+`BundleOptions` provides the library equivalents of the CLI settings:
 
-| Option                     | Description                                                    | Default |
-| -------------------------- | -------------------------------------------------------------- | ------- |
-| `external`                 | Package names to keep as runtime imports (not bundled)         | `[]`    |
-| `max_imported_modules`     | Maximum number of modules to bundle                            | `2048`  |
-| `interpreter`              | Python interpreters used to discover opt-in `sys.path` imports | `[]`    |
-| `require_bundle_directive` | Require `# bundle` for imports resolved through `sys.path`     | `true`  |
-| `tree_shaking`             | Remove unused imports unless marked with `# bundle`            | `true`  |
-| `format`                   | Format bundled output                                          | `false` |
+| Field                      | Description                                                | Default |
+| -------------------------- | ---------------------------------------------------------- | ------- |
+| `external`                 | Top-level packages to keep as runtime imports              | `[]`    |
+| `max_imported_modules`     | Maximum number of imported modules to bundle               | `2048`  |
+| `interpreter`              | Python interpreters used to discover `sys.path`            | `[]`    |
+| `require_bundle_directive` | Require `# bundle` for imports resolved through `sys.path` | `true`  |
+| `tree_shaking`             | Remove unused imports unless marked with `# bundle`        | `true`  |
+| `format`                   | Format the bundled output with Ruff                        | `false` |
+
+`bundle_file` returns a `BundleResult` containing the generated `code`, entry-file and entry-module information, and metadata for every bundled module.
 
 ## License
 
