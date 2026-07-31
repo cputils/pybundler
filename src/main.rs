@@ -5,6 +5,18 @@ use std::process::ExitCode;
 use clap::Parser;
 use pybundler::{BundleOptions, bundle_file};
 
+#[cfg(not(windows))]
+const DEFAULT_INTERPRETERS: &[&str] = &["python3", "python", "pypy3", "pypy"];
+#[cfg(windows)]
+const DEFAULT_INTERPRETERS: &[&str] = &["py", "python", "python3", "pypy3", "pypy"];
+
+fn default_interpreters() -> Vec<String> {
+    DEFAULT_INTERPRETERS
+        .iter()
+        .map(ToString::to_string)
+        .collect()
+}
+
 /// Bundle a Python program and its local dependencies into a single script.
 #[derive(Debug, Parser)]
 #[command(version)]
@@ -25,7 +37,7 @@ struct Cli {
     max_imported_modules: usize,
 
     /// Python interpreter used to discover sys.path. May be repeated.
-    #[arg(short, long)]
+    #[arg(short, long, default_values_t = default_interpreters())]
     interpreter: Vec<String>,
 
     /// Bundle imports discovered through sys.path without a # bundle directive.
@@ -73,4 +85,24 @@ fn run(cli: Cli) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uses_platform_interpreters_by_default() {
+        let cli = Cli::try_parse_from(["pybundler", "main.py"]).expect("parse CLI arguments");
+
+        assert_eq!(cli.interpreter, default_interpreters());
+    }
+
+    #[test]
+    fn explicit_interpreters_replace_platform_defaults() {
+        let cli = Cli::try_parse_from(["pybundler", "main.py", "--interpreter", "custom-python"])
+            .expect("parse CLI arguments");
+
+        assert_eq!(cli.interpreter, ["custom-python"]);
+    }
 }

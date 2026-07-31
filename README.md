@@ -49,7 +49,9 @@ pybundler supports:
 - ZIP path entries with any archive extension and with an internal path prefix
 - CPython search precedence across all supported module and path-entry types
 
-By default, resolution starts at the entry file's directory. Each `--interpreter` value is invoked to discover additional `sys.path` entries. An import resolved from one of those entries must have a `# bundle` directive at the project boundary unless `--no-require-bundle-directive` is used. Once admitted, its transitive imports are bundled without additional directives.
+By default, resolution starts at the entry file's directory. The CLI also tries common Python commands to discover additional `sys.path` entries, ignoring commands that are not installed or cannot run. It tries `python3`, `python`, `pypy3`, and `pypy` on Unix-like systems; on Windows it also tries the `py` launcher first. Passing one or more `--interpreter` values replaces these defaults.
+
+An import resolved from an interpreter's `sys.path` must have a `# bundle` directive at the project boundary unless `--no-require-bundle-directive` is used. Once admitted, its transitive imports are bundled without additional directives.
 
 Imports whose top-level package is passed with `--external` remain runtime imports. A `# bundle` directive on an individual import overrides that setting, while `# no-bundle` prevents that import from being bundled.
 
@@ -61,15 +63,13 @@ Keep a package as a normal runtime dependency instead of bundling it:
 pybundler src/main.py --output bundled.py --external numpy
 ```
 
-Bundle a package installed for a particular Python interpreter by marking its import with `# bundle` and specifying that interpreter:
+Bundle an installed package by marking its import with `# bundle`:
 
 ```python
 import some_package  # bundle
 ```
 
-```sh
-pybundler src/main.py --output bundled.py --interpreter python3
-```
+Use `--interpreter <COMMAND>` when you need to select a particular Python installation instead of the platform defaults.
 
 Add `# no-bundle` to an import when it should remain a normal runtime import:
 
@@ -93,15 +93,15 @@ Native extension modules, sourceless bytecode modules, and source files using in
 
 Options marked as repeatable may be supplied more than once.
 
-| Option                           | Description                                                | Default         |
-| -------------------------------- | ---------------------------------------------------------- | --------------- |
-| `-o, --output <FILE>`            | Write the bundle to a file instead of standard output      | standard output |
-| `-e, --external <PACKAGE>`       | Keep a top-level package as a runtime import; repeatable   | none            |
-| `--max-imported-modules <COUNT>` | Limit the number of imported modules bundled               | `2048`          |
-| `-i, --interpreter <COMMAND>`    | Discover `sys.path` using a Python interpreter; repeatable | none            |
-| `--no-require-bundle-directive`  | Bundle imports found through `sys.path` without `# bundle` | disabled        |
-| `--no-tree-shaking`              | Keep unused imports in bundled modules                     | disabled        |
-| `--format`                       | Format the generated bundle with Ruff                      | disabled        |
+| Option                           | Description                                                | Default                  |
+| -------------------------------- | ---------------------------------------------------------- | ------------------------ |
+| `-o, --output <FILE>`            | Write the bundle to a file instead of standard output      | standard output          |
+| `-e, --external <PACKAGE>`       | Keep a top-level package as a runtime import; repeatable   | none                     |
+| `--max-imported-modules <COUNT>` | Limit the number of imported modules bundled               | `2048`                   |
+| `-i, --interpreter <COMMAND>`    | Discover `sys.path` using a Python interpreter; repeatable | common platform commands |
+| `--no-require-bundle-directive`  | Bundle imports found through `sys.path` without `# bundle` | disabled                 |
+| `--no-tree-shaking`              | Keep unused imports in bundled modules                     | disabled                 |
+| `--format`                       | Format the generated bundle with Ruff                      | disabled                 |
 
 ### Rust library
 
@@ -121,7 +121,7 @@ let result = bundle_file("src/main.py", BundleOptions::default())?;
 std::fs::write("bundled.py", result.code)?;
 ```
 
-`BundleOptions` provides the library equivalents of the CLI settings:
+`BundleOptions` provides the library equivalents of the CLI settings. Unlike the CLI, the library does not select interpreters by default:
 
 | Field                      | Description                                                | Default |
 | -------------------------- | ---------------------------------------------------------- | ------- |
