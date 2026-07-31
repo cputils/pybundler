@@ -1219,12 +1219,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "path-clean"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17359afc20d7ab31fdb42bb844c8b3bb1dabd7dcf7e68428492da7f16966fcef"
-
-[[package]]
 name = "path-dedot"
 version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1463,7 +1457,6 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "get-size2",
- "path-clean",
  "ruff_formatter",
  "ruff_linter",
  "ruff_python_ast",

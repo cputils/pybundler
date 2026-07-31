@@ -1,0 +1,3 @@
+{
+  "mustContain": ["\f\tprint(\"value\", helper.VALUE)"]
+}

@@ -82,7 +82,7 @@ pub struct BundledModule {
 pub struct BundleResult {
     /// Generated bundled Python code.
     pub code: String,
-    /// Absolute path of the entry file.
+    /// Canonical absolute path of the entry file.
     pub entry_file: String,
     /// Dotted module name of the entry file.
     pub entry_module: String,
@@ -503,16 +503,7 @@ pub fn bundle_file(entry_file: &str, opts: BundleOptions) -> Result<BundleResult
 }
 
 fn canonical_abs(path: &Path, context: &str) -> Result<PathBuf, String> {
-    let abs = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .map_err(|err| format!("{context}: {err}"))?
-            .join(path)
-    };
-    use path_clean::PathClean;
-
-    Ok(abs.clean())
+    fs::canonicalize(path).map_err(|err| format!("{context} {}: {err}", path.display()))
 }
 
 fn has_py_extension(path: &Path) -> bool {
@@ -552,4 +543,27 @@ fn is_guaranteed_builtin(module_name: &str) -> bool {
         module_name.split('.').next().unwrap_or_default(),
         "builtins" | "sys" | "_imp"
     )
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::canonical_abs;
+    use std::os::unix::fs::symlink;
+
+    #[test]
+    fn canonicalizes_parent_components_after_symlinks() {
+        let root = std::env::temp_dir().join(format!("pybundler-canonical-{}", std::process::id()));
+        let real = root.join("real");
+        let apparent = root.join("apparent");
+        std::fs::create_dir_all(real.join("sub")).expect("create real directory");
+        std::fs::create_dir_all(&apparent).expect("create apparent directory");
+        std::fs::write(real.join("main.py"), b"pass\n").expect("write entry module");
+        symlink(real.join("sub"), apparent.join("link")).expect("create directory symlink");
+
+        let resolved = canonical_abs(&apparent.join("link/../main.py"), "resolve")
+            .expect("resolve symlinked path");
+
+        std::fs::remove_dir_all(&root).expect("remove test tree");
+        assert_eq!(resolved, real.join("main.py"));
+    }
 }

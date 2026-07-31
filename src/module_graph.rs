@@ -85,7 +85,7 @@ pub(crate) fn module_name_from_path(
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or_else(|| format!("invalid module path for file {}", file_path.display()))?;
-    if base.eq_ignore_ascii_case("__init__.py") {
+    if is_package_init(file_path, base) {
         let dir = rel.parent().unwrap_or_else(|| Path::new("."));
         if dir == Path::new(".") {
             return Err(format!(
@@ -117,6 +117,19 @@ pub(crate) fn module_name_from_path(
     Ok((module_name, false))
 }
 
+fn is_package_init(file_path: &Path, base: &str) -> bool {
+    if base == "__init__.py" {
+        return true;
+    }
+    if !base.eq_ignore_ascii_case("__init__.py") {
+        return false;
+    }
+    let Ok(expected) = file_path.with_file_name("__init__.py").canonicalize() else {
+        return false;
+    };
+    expected == file_path
+}
+
 fn rel_components_to_module_name(path: &Path) -> Result<String, String> {
     let mut out = Vec::new();
     for component in path.components() {
@@ -130,4 +143,24 @@ fn rel_components_to_module_name(path: &Path) -> Result<String, String> {
         }
     }
     Ok(out.join("."))
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::module_name_from_path;
+
+    #[test]
+    fn does_not_treat_differently_cased_init_as_package_on_case_sensitive_fs() {
+        let root =
+            std::env::temp_dir().join(format!("pybundler-module-name-{}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("create test directory");
+        let entry = root.join("__INIT__.PY");
+        std::fs::write(&entry, b"pass\n").expect("write entry module");
+
+        let module = module_name_from_path(&root, &entry).expect("derive module name");
+
+        std::fs::remove_file(entry).expect("remove entry module");
+        std::fs::remove_dir(root).expect("remove test directory");
+        assert_eq!(module, ("__INIT__".to_string(), false));
+    }
 }

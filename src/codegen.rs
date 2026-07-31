@@ -226,10 +226,11 @@ pub(crate) fn module_block_body_source(
             continue;
         }
         if !line.trim().is_empty() && !protected_lines.is_some_and(|set| set.contains(&index)) {
-            out.push_str(prefix);
+            append_indent_prefix(&mut out, prefix, line);
             has_statement |= !line.trim_start().starts_with('#');
+        } else {
+            out.push_str(line);
         }
-        out.push_str(line);
         out.push('\n');
     }
     if !has_statement {
@@ -237,6 +238,22 @@ pub(crate) fn module_block_body_source(
         out.push_str("pass\n");
     }
     out
+}
+
+fn append_indent_prefix(out: &mut String, prefix: &str, line: &str) {
+    let leading_end = line
+        .find(|ch: char| !matches!(ch, ' ' | '\t' | '\x0c'))
+        .unwrap_or(line.len());
+    let leading = &line[..leading_end];
+    if let Some(form_feed) = leading.rfind('\x0c') {
+        let after_form_feed = form_feed + '\x0c'.len_utf8();
+        out.push_str(&line[..after_form_feed]);
+        out.push_str(prefix);
+        out.push_str(&line[after_form_feed..]);
+    } else {
+        out.push_str(prefix);
+        out.push_str(line);
+    }
 }
 
 fn module_source_indent_prefix(

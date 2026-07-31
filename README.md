@@ -82,7 +82,7 @@ import another_package  # no-bundle
 - Unused imports are removed by default; imports marked with `# bundle` are preserved.
 - `--no-tree-shaking` keeps unused imports.
 - Bundled modules' `__future__` imports are hoisted so the combined script remains valid Python.
-- UTF-8 BOMs and PEP 263 declarations for UTF-8, ASCII, and Latin-1 are supported.
+- UTF-8 BOMs and PEP 263 declarations for UTF-8, ASCII, and Latin-1 are supported. Source is emitted as UTF-8, and encoding declarations are normalized accordingly.
 - License texts discovered in bundled third-party packages are embedded automatically.
 - `--format` formats the generated script with Ruff.
 - `--max-imported-modules` limits dependency-graph expansion and defaults to `2048`.

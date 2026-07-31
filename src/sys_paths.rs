@@ -1,5 +1,9 @@
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+
+#[cfg(unix)]
+use std::os::unix::ffi::OsStringExt;
 
 use crate::resolver::is_importable_zip;
 
@@ -14,7 +18,10 @@ pub(crate) fn discover_sys_paths(interpreters: &[String]) -> Vec<PathBuf> {
     let mut children = Vec::with_capacity(interpreters.len());
     for interpreter in interpreters {
         let child = Command::new(interpreter)
-            .args(["-c", "import sys;print(*sys.path,sep='\\0',end='')"])
+            .args([
+                "-c",
+                "import os,sys;sys.stdout.buffer.write(b'\\0'.join(map(os.fsencode,sys.path)))",
+            ])
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn();
@@ -30,20 +37,10 @@ pub(crate) fn discover_sys_paths(interpreters: &[String]) -> Vec<PathBuf> {
         if !output.status.success() {
             continue;
         }
-        let stdout = match String::from_utf8(output.stdout) {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-        if stdout.is_empty() {
+        if output.stdout.is_empty() {
             continue;
         }
-        let nul_separated = stdout.contains('\0');
-        for raw_token in stdout.split('\0') {
-            let token = if nul_separated {
-                raw_token
-            } else {
-                raw_token.trim_end_matches(['\r', '\n'])
-            };
+        for token in sys_path_tokens(output.stdout) {
             let path = if token.is_empty() {
                 let Some(current_dir) = &current_dir else {
                     continue;
@@ -66,4 +63,57 @@ pub(crate) fn discover_sys_paths(interpreters: &[String]) -> Vec<PathBuf> {
         }
     }
     paths
+}
+
+#[cfg(unix)]
+fn sys_path_tokens(stdout: Vec<u8>) -> Vec<OsString> {
+    let nul_separated = stdout.contains(&0);
+    stdout
+        .split(|byte| *byte == 0)
+        .map(|token| {
+            let token = if nul_separated {
+                token
+            } else {
+                let end = token
+                    .iter()
+                    .rposition(|byte| !matches!(byte, b'\r' | b'\n'))
+                    .map_or(0, |index| index + 1);
+                &token[..end]
+            };
+            OsString::from_vec(token.to_vec())
+        })
+        .collect()
+}
+
+#[cfg(not(unix))]
+fn sys_path_tokens(stdout: Vec<u8>) -> Vec<OsString> {
+    let Ok(stdout) = String::from_utf8(stdout) else {
+        return Vec::new();
+    };
+    let nul_separated = stdout.contains('\0');
+    stdout
+        .split('\0')
+        .map(|token| {
+            if nul_separated {
+                token
+            } else {
+                token.trim_end_matches(['\r', '\n'])
+            }
+        })
+        .map(OsString::from)
+        .collect()
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::sys_path_tokens;
+    use std::os::unix::ffi::OsStrExt;
+
+    #[test]
+    fn preserves_non_utf8_sys_path_entries() {
+        let tokens = sys_path_tokens(b"/tmp/non-utf8-\xff\0/tmp/other".to_vec());
+
+        assert_eq!(tokens[0].as_bytes(), b"/tmp/non-utf8-\xff");
+        assert_eq!(tokens[1].as_bytes(), b"/tmp/other");
+    }
 }

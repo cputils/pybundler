@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::Read;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use crate::codegen::module_package_name;
@@ -413,14 +414,15 @@ fn extension_module_exists(directory: &Path, stem: &str) -> bool {
         }
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        if name == format!("{stem}.so") || name == format!("{stem}.pyd") {
-            return true;
-        }
-        let Some(tag) = name.strip_prefix(&format!("{stem}.")) else {
+        let Some((_, tag)) = name.split_once('.') else {
             return false;
         };
-        (tag.ends_with(".so") && (tag.starts_with("cpython-") || tag == "abi3.so"))
-            || (tag.ends_with(".pyd") && (tag.starts_with("cp") || tag == "abi3.pyd"))
+        let tag = tag.to_ascii_lowercase();
+        let supported = tag == "so"
+            || tag == "pyd"
+            || (tag.ends_with(".so") && (tag.starts_with("cpython-") || tag == "abi3.so"))
+            || (tag.ends_with(".pyd") && (tag.starts_with("cp") || tag == "abi3.pyd"));
+        supported && directory.join(format!("{stem}.{tag}")).is_file()
     })
 }
 
@@ -428,7 +430,10 @@ fn extension_module_exists(directory: &Path, stem: &str) -> bool {
 /// zip archive entries (paths containing `::`).
 pub(crate) fn read_module_source(file_path: &Path) -> Result<Vec<u8>, String> {
     let path_str = file_path.to_string_lossy();
-    let bytes = if let Some(pos) = path_str.find(ZIP_SEPARATOR) {
+    let bytes = if file_path.is_file() {
+        std::fs::read(file_path)
+            .map_err(|err| format!("read file {}: {err}", file_path.display()))?
+    } else if let Some(pos) = find_zip_separator(&path_str) {
         let zip_path = Path::new(&path_str[..pos]);
         let entry_path = &path_str[pos + ZIP_SEPARATOR.len()..];
         let file = File::open(zip_path)
@@ -450,20 +455,34 @@ pub(crate) fn read_module_source(file_path: &Path) -> Result<Vec<u8>, String> {
     decode_python_source(&bytes, file_path).map(String::into_bytes)
 }
 
+fn find_zip_separator(path: &str) -> Option<usize> {
+    path.rmatch_indices(ZIP_SEPARATOR)
+        .map(|(index, _)| index)
+        .find(|index| {
+            File::open(&path[..*index])
+                .ok()
+                .and_then(|file| zip::ZipArchive::new(file).ok())
+                .is_some()
+        })
+}
+
 fn decode_python_source(bytes: &[u8], file_path: &Path) -> Result<String, String> {
     let has_utf8_bom = bytes.starts_with(&[0xef, 0xbb, 0xbf]);
     let source = if has_utf8_bom { &bytes[3..] } else { bytes };
-    let encoding = find_source_encoding(source).unwrap_or("utf-8");
-    let normalized = encoding.to_ascii_lowercase().replace('_', "-");
+    let encoding_cookie = find_source_encoding(source);
+    let encoding = encoding_cookie
+        .as_ref()
+        .map_or("utf-8", |(encoding, _)| *encoding);
+    let normalized = normalize_source_encoding(encoding);
 
-    if has_utf8_bom && !matches!(normalized.as_str(), "utf-8" | "utf8" | "utf-8-sig") {
+    if has_utf8_bom && normalized != "utf-8" {
         return Err(format!(
             "encoding problem in {}: UTF-8 BOM conflicts with {encoding}",
             file_path.display()
         ));
     }
 
-    match normalized.as_str() {
+    let decoded = match normalized.as_str() {
         "utf-8" | "utf8" | "utf-8-sig" => std::str::from_utf8(source)
             .map(ToString::to_string)
             .map_err(|err| format!("decode {} as UTF-8: {err}", file_path.display())),
@@ -483,66 +502,121 @@ fn decode_python_source(bytes: &[u8], file_path: &Path) -> Result<String, String
             "unsupported source encoding {encoding:?} in {}",
             file_path.display()
         )),
+    }?;
+
+    let Some((_, range)) = encoding_cookie else {
+        return Ok(decoded);
+    };
+    let mut normalized_source = source.to_vec();
+    normalized_source.splice(range, b"utf-8".iter().copied());
+    match normalized.as_str() {
+        "utf-8" | "utf8" | "utf-8-sig" | "ascii" | "us-ascii" => {
+            String::from_utf8(normalized_source)
+                .map_err(|err| format!("normalize encoding for {}: {err}", file_path.display()))
+        }
+        "latin-1" | "latin1" | "iso-8859-1" | "iso8859-1" => Ok(normalized_source
+            .iter()
+            .map(|byte| char::from(*byte))
+            .collect()),
+        _ => unreachable!("unsupported encodings return before normalization"),
     }
 }
 
-fn find_source_encoding(bytes: &[u8]) -> Option<&str> {
-    let first_end = bytes
-        .iter()
-        .position(|byte| *byte == b'\n')
-        .unwrap_or(bytes.len());
-    let first_line = &bytes[..first_end];
-    if let Some(encoding) = find_encoding_in_line(first_line) {
-        return Some(encoding);
+fn normalize_source_encoding(encoding: &str) -> String {
+    let normalized = encoding
+        .chars()
+        .take(12)
+        .collect::<String>()
+        .to_ascii_lowercase()
+        .replace('_', "-");
+    if normalized == "utf-8" || normalized.starts_with("utf-8-") {
+        return "utf-8".to_string();
     }
-    if !first_line
+    if matches!(
+        normalized.as_str(),
+        "latin-1" | "iso-8859-1" | "iso-latin-1"
+    ) || normalized.starts_with("latin-1-")
+        || normalized.starts_with("iso-8859-1-")
+        || normalized.starts_with("iso-latin-1-")
+    {
+        return "iso-8859-1".to_string();
+    }
+    normalized
+}
+
+fn find_source_encoding(bytes: &[u8]) -> Option<(&str, Range<usize>)> {
+    let (first_end, second_start) = python_line_bounds(bytes, 0);
+    if let Some(range) = find_encoding_in_line(&bytes[..first_end]) {
+        return std::str::from_utf8(&bytes[range.clone()])
+            .ok()
+            .map(|encoding| (encoding, range));
+    }
+    let first_line = &bytes[..first_end];
+    if first_line
         .iter()
         .copied()
         .find(|byte| !matches!(byte, b' ' | b'\t' | b'\x0c'))
-        .is_none_or(|byte| matches!(byte, b'#' | b'\r'))
+        .is_some_and(|byte| byte != b'#')
+        || second_start == bytes.len()
     {
         return None;
     }
-    if first_end == bytes.len() {
-        return None;
-    }
-    let second_start = first_end.saturating_add(1);
-    let second_end = bytes[second_start..]
-        .iter()
-        .position(|byte| *byte == b'\n')
-        .map_or(bytes.len(), |index| second_start + index);
-    find_encoding_in_line(&bytes[second_start..second_end])
+    let (second_end, _) = python_line_bounds(bytes, second_start);
+    let relative_range = find_encoding_in_line(&bytes[second_start..second_end])?;
+    let range = (second_start + relative_range.start)..(second_start + relative_range.end);
+    std::str::from_utf8(&bytes[range.clone()])
+        .ok()
+        .map(|encoding| (encoding, range))
 }
 
-fn find_encoding_in_line(line: &[u8]) -> Option<&str> {
-    let comment = line.iter().position(|byte| *byte == b'#')?;
-    let lower = line[comment..]
+fn python_line_bounds(bytes: &[u8], start: usize) -> (usize, usize) {
+    let Some(relative_end) = bytes[start..]
         .iter()
-        .map(u8::to_ascii_lowercase)
-        .collect::<Vec<_>>();
-    let coding = lower.windows(6).position(|window| window == b"coding")? + 6;
-    let mut index = coding;
-    while matches!(lower.get(index), Some(b' ' | b'\t')) {
-        index += 1;
+        .position(|byte| matches!(byte, b'\r' | b'\n'))
+    else {
+        return (bytes.len(), bytes.len());
+    };
+    let end = start + relative_end;
+    let mut next = end + 1;
+    if bytes[end] == b'\r' && bytes.get(next) == Some(&b'\n') {
+        next += 1;
     }
-    if !matches!(lower.get(index), Some(b':' | b'=')) {
+    (end, next)
+}
+
+fn find_encoding_in_line(line: &[u8]) -> Option<Range<usize>> {
+    let comment = line
+        .iter()
+        .take_while(|byte| matches!(byte, b' ' | b'\t' | b'\x0c'))
+        .count();
+    if line.get(comment) != Some(&b'#') {
         return None;
     }
-    index += 1;
-    while matches!(lower.get(index), Some(b' ' | b'\t')) {
+    for coding in line[comment + 1..]
+        .windows(6)
+        .enumerate()
+        .filter_map(|(offset, window)| (window == b"coding").then_some(comment + 1 + offset + 6))
+    {
+        let mut index = coding;
+        if !matches!(line.get(index), Some(b':' | b'=')) {
+            continue;
+        }
         index += 1;
+        while matches!(line.get(index), Some(b' ' | b'\t')) {
+            index += 1;
+        }
+        let start = index;
+        while matches!(
+            line.get(index),
+            Some(b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.')
+        ) {
+            index += 1;
+        }
+        if start != index {
+            return Some(start..index);
+        }
     }
-    let start = index;
-    while matches!(
-        lower.get(index),
-        Some(b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.')
-    ) {
-        index += 1;
-    }
-    if start == index {
-        return None;
-    }
-    std::str::from_utf8(&line[comment + start..comment + index]).ok()
+    None
 }
 
 pub(crate) fn resolve_relative_module_name(
@@ -576,6 +650,9 @@ mod tests {
     use super::{decode_python_source, resolve_relative_module_name};
     use std::path::Path;
 
+    #[cfg(not(windows))]
+    use super::read_module_source;
+
     #[test]
     fn decodes_pep_263_latin_1_source() {
         let source = decode_python_source(
@@ -583,7 +660,27 @@ mod tests {
             Path::new("module.py"),
         )
         .expect("decode Latin-1 source");
-        assert_eq!(source, "# coding: latin-1\nVALUE = 'é'\n");
+        assert_eq!(source, "# coding: utf-8\nVALUE = 'é'\n");
+    }
+
+    #[test]
+    fn detects_cookie_after_bare_carriage_return() {
+        let source = decode_python_source(
+            b"# comment\r# coding: latin-1\rVALUE = '\xe9'\r",
+            Path::new("module.py"),
+        )
+        .expect("decode Latin-1 source");
+        assert!(source.contains("# coding: utf-8\rVALUE = 'é'"));
+    }
+
+    #[test]
+    fn ignores_cookie_after_code() {
+        let error = decode_python_source(
+            b"VALUE = 1  # coding: latin-1\nTEXT = '\xe9'\n",
+            Path::new("module.py"),
+        )
+        .expect_err("an inline cookie must not override UTF-8");
+        assert!(error.contains("decode module.py as UTF-8"));
     }
 
     #[test]
@@ -595,9 +692,37 @@ mod tests {
     }
 
     #[test]
+    fn matches_cpython_bom_cookie_normalization() {
+        let error = decode_python_source(b"\xef\xbb\xbf# coding: utf8\n", Path::new("module.py"))
+            .expect_err("CPython rejects utf8 without a separator after a BOM");
+        assert!(error.contains("BOM conflicts"));
+
+        decode_python_source(b"\xef\xbb\xbf# coding: UTF_8\n", Path::new("module.py"))
+            .expect("CPython accepts normalized UTF_8 after a BOM");
+    }
+
+    #[test]
     fn rejects_relative_import_beyond_top_level() {
         let error = resolve_relative_module_name("pkg.module", false, "other", 2)
             .expect_err("relative import beyond top level must fail");
         assert!(error.contains("beyond top-level"));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn reads_regular_file_with_zip_separator_in_path() {
+        let directory = std::env::temp_dir().join(format!(
+            "pybundler-resolver-{}::directory",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&directory).expect("create test directory");
+        let path = directory.join("module.py");
+        std::fs::write(&path, b"VALUE = 1\n").expect("write test module");
+
+        let source = read_module_source(&path).expect("read regular module");
+
+        std::fs::remove_file(path).expect("remove test module");
+        std::fs::remove_dir(directory).expect("remove test directory");
+        assert_eq!(source, b"VALUE = 1\n");
     }
 }
