@@ -10,6 +10,8 @@ description = "Bundle a Python program and its local dependencies into a single 
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+# Ruff 0.15.22 requires compact_str 0.9, which get-size2 0.10.1+ no longer supports.
+get-size2 = "=0.10.0"
 path-clean = "1"
 ruff_formatter = { git = "https://github.com/astral-sh/ruff", tag = "0.15.22" }
 ruff_linter = { git = "https://github.com/astral-sh/ruff", tag = "0.15.22" }

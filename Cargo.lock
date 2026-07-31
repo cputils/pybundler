@@ -1462,6 +1462,7 @@ name = "pybundler"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "get-size2",
  "path-clean",
  "ruff_formatter",
  "ruff_linter",
