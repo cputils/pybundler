@@ -34,6 +34,8 @@ pub struct BundleOptions {
     pub interpreter: Vec<String>,
     /// Whether to remove unused imports from the bundled output.
     ///
+    /// Imports marked with `# bundle` are preserved.
+    ///
     /// Defaults to `true`.
     pub tree_shaking: bool,
     /// Whether to format the bundled output with Ruff.

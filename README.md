@@ -30,7 +30,7 @@ Think of it like Webpack or Rollup, but for Python.
 - Queries Python interpreters to discover `sys.path` for accurate module resolution
 - Supports UTF-8 BOMs and PEP 263 source declarations for UTF-8, ASCII, and Latin-1
 - Hoists bundled modules' `__future__` imports so the readable combined script remains valid Python
-- Removes unused imports from bundled modules
+- Removes unused imports from bundled modules, except imports marked with `# bundle`
 - Formats the bundled output with Ruff
 
 Native extension modules, sourceless bytecode modules, and source files using interpreter-registered codecs other than UTF-8, ASCII, or Latin-1 remain runtime dependencies because reproducing them requires the target Python interpreter or platform.
@@ -60,7 +60,7 @@ std::fs::write("bundled.py", result.code)?;
 | `external`             | Package names to keep as runtime imports (not bundled)         | `[]`    |
 | `max_imported_modules` | Maximum number of modules to bundle                            | `2048`  |
 | `interpreter`          | Python interpreters used to discover opt-in `sys.path` imports | `[]`    |
-| `tree_shaking`         | Remove unused imports from bundled output                      | `true`  |
+| `tree_shaking`         | Remove unused imports unless marked with `# bundle`            | `true`  |
 | `format`               | Format bundled output                                          | `false` |
 
 ## License

@@ -132,6 +132,44 @@ pub(crate) fn analyze_module(mod_data: &ModuleData) -> Result<ModuleAnalysis, St
     })
 }
 
+pub(crate) fn bundled_import_ranges(source: &str) -> Vec<TextRange> {
+    let Ok(parsed) = parse_module(source) else {
+        return Vec::new();
+    };
+    let line_index = LineIndex::from_source_text(source);
+    let (_, bundle_lines, _) = collect_source_metadata(source, &parsed, &line_index);
+    let mut collector = BundledImportCollector {
+        ranges: Vec::new(),
+        bundle_lines: &bundle_lines,
+        line_index: &line_index,
+    };
+    for stmt in &parsed.syntax().body {
+        collector.visit_stmt(stmt);
+    }
+    collector.ranges
+}
+
+struct BundledImportCollector<'a> {
+    ranges: Vec<TextRange>,
+    bundle_lines: &'a SkipDirectives,
+    line_index: &'a LineIndex,
+}
+
+impl<'a> Visitor<'a> for BundledImportCollector<'_> {
+    fn visit_stmt(&mut self, stmt: &'a Stmt) {
+        if matches!(stmt, Stmt::Import(_) | Stmt::ImportFrom(_)) {
+            let line = self
+                .line_index
+                .line_index(stmt.range().start())
+                .to_zero_indexed();
+            if is_bundle_import(line, self.bundle_lines) {
+                self.ranges.push(stmt.range());
+            }
+        }
+        visitor::walk_stmt(self, stmt);
+    }
+}
+
 struct ImportCollector {
     requests: Vec<ImportRequest>,
     walk_error: Option<String>,

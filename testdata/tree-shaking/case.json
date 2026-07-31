@@ -2,10 +2,12 @@
   "treeShaking": true,
   "mustContain": [
     "from math import pi",
-    "import sys"
+    "import json  # bundle",
+    "import pathlib"
   ],
   "mustNotContain": [
     "import os",
-    "import math"
+    "import math",
+    "import sys"
   ]
 }
