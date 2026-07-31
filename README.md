@@ -35,9 +35,36 @@ Think of it like Webpack or Rollup, but for Python.
 
 Native extension modules, sourceless bytecode modules, and source files using interpreter-registered codecs other than UTF-8, ASCII, or Latin-1 remain runtime dependencies because reproducing them requires the target Python interpreter or platform.
 
-## Usage
+## Installation
 
-pybundler is a Rust library. Add it to your `Cargo.toml`:
+Install the `pybundler` command from the repository with Cargo:
+
+```sh
+cargo install --git https://github.com/cputils/pybundler pybundler
+```
+
+## CLI usage
+
+Bundle an entry file to standard output:
+
+```sh
+pybundler src/main.py > bundled.py
+```
+
+Alternatively, specify an output file and bundling options directly:
+
+```sh
+pybundler src/main.py --output bundled.py \
+  --external numpy \
+  --interpreter python3 \
+  --format
+```
+
+Use `pybundler --help` to see all options. `--external` and `--interpreter` may each be repeated.
+
+## Library usage
+
+pybundler can also be used as a Rust library. Add it to your `Cargo.toml`:
 
 ```toml
 [dependencies]

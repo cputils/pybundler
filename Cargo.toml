@@ -1,8 +1,15 @@
 [package]
 name = "pybundler"
+version = "0.1.0"
+categories = ["command-line-utilities", "development-tools"]
 edition = "2024"
+keywords = ["python", "bundler", "cli"]
+license = "MIT"
+repository = "https://github.com/cputils/pybundler"
+description = "Bundle a Python program and its local dependencies into a single script"
 
 [dependencies]
+clap = { version = "4", features = ["derive"] }
 path-clean = "1"
 ruff_formatter = { git = "https://github.com/astral-sh/ruff", tag = "0.15.22" }
 ruff_linter = { git = "https://github.com/astral-sh/ruff", tag = "0.15.22" }
