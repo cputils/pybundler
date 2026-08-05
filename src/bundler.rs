@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque, hash_map::Entry};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -6,7 +6,7 @@ use crate::analyzer::{ImportRequest, ModuleAnalysis, analyze_module};
 use crate::codegen::generate_bundle_code;
 use crate::licenses::collect_license_comments;
 use crate::module_graph::{ensure_parent_packages, module_name_from_path};
-use crate::resolver::{ModuleResolver, read_module_source};
+use crate::resolver::{ModuleResolver, ResolvedModule, read_module_source};
 use crate::sys_paths::discover_sys_paths;
 use crate::tree_shaking::remove_unused_imports;
 use ruff_python_formatter::{PyFormatOptions, format_module_source};
@@ -107,6 +107,8 @@ pub(crate) struct ImportedModuleBudget {
     pub imported_count: usize,
 }
 
+type AnalysisCache = HashMap<PathBuf, (ModuleAnalysis, Vec<u8>)>;
+
 impl ImportedModuleBudget {
     pub(crate) fn track(&mut self, module_name: &str) -> Result<(), String> {
         if self.imported_count >= self.max_imported_modules {
@@ -162,29 +164,7 @@ impl ImportedModuleBudget {
 /// # Ok::<(), String>(())
 /// ```
 pub fn bundle_file(entry_file: &str, opts: BundleOptions) -> Result<BundleResult, String> {
-    if entry_file.trim().is_empty() {
-        return Err("entry file is required".to_string());
-    }
-
-    let abs_entry = canonical_abs(Path::new(entry_file), "resolve entry file path")?;
-    let entry_meta = fs::metadata(&abs_entry).map_err(|err| format!("stat entry file: {err}"))?;
-    if entry_meta.is_dir() {
-        return Err(format!(
-            "entry file must be a Python file, got directory: {}",
-            abs_entry.display()
-        ));
-    }
-    if !has_py_extension(&abs_entry) {
-        return Err(format!(
-            "entry file must end with .py: {}",
-            abs_entry.display()
-        ));
-    }
-
-    let project_root = abs_entry
-        .parent()
-        .ok_or_else(|| "entry file must have parent directory".to_string())?
-        .to_path_buf();
+    let (abs_entry, project_root) = resolve_entry_file(entry_file)?;
 
     let external = normalize_external_prefixes(&opts.external);
     let max_imported_modules = opts.max_imported_modules;
@@ -202,7 +182,7 @@ pub fn bundle_file(entry_file: &str, opts: BundleOptions) -> Result<BundleResult
     search_roots.extend(sys_path_roots.iter().cloned());
     let resolver = ModuleResolver::new(project_root.clone(), sys_path_roots);
     let mut module_map: HashMap<String, ModuleData> = HashMap::new();
-    let mut analysis_cache: HashMap<PathBuf, (ModuleAnalysis, Vec<u8>)> = HashMap::new();
+    let mut analysis_cache = AnalysisCache::new();
     let mut pending_all_expansions: HashMap<String, bool> = HashMap::new();
     let mut completed_all_expansions: HashMap<String, bool> = HashMap::new();
     let mut force_runtime = false;
@@ -231,44 +211,11 @@ pub fn bundle_file(entry_file: &str, opts: BundleOptions) -> Result<BundleResult
             continue;
         }
 
-        if !analysis_cache.contains_key(&current_snapshot.file_path) {
-            let source = read_module_source(&current_snapshot.file_path).map_err(|err| {
-                format!(
-                    "read module {:?} ({}): {err}",
-                    current_snapshot.name,
-                    current_snapshot.file_path.display()
-                )
-            })?;
-            let mut analyzed = current_snapshot.clone();
-            if tree_shaking_enabled {
-                let source_str = String::from_utf8_lossy(&source).to_string();
-                analyzed.source = remove_unused_imports(&source_str).into_bytes();
-            } else {
-                analyzed.source = source;
-            }
-            analyzed.analysis = Some(analyze_module(&analyzed)?);
-            analysis_cache.insert(
-                current_snapshot.file_path.clone(),
-                (
-                    analyzed
-                        .analysis
-                        .clone()
-                        .ok_or_else(|| "internal error: missing analysis".to_string())?,
-                    analyzed.source.clone(),
-                ),
-            );
-            if let Some(current) = module_map.get_mut(&current_name) {
-                current.source = analyzed.source;
-                current.analysis = analyzed.analysis;
-            }
-        } else {
-            if let Some(current) = module_map.get_mut(&current_name) {
-                let (analysis, shaken) = analysis_cache
-                    .get(&current_snapshot.file_path)
-                    .ok_or_else(|| "internal error: missing cache entry".to_string())?;
-                current.source.clone_from(shaken);
-                current.analysis = Some(analysis.clone());
-            }
+        let (analysis, source) =
+            analyze_cached_module(&current_snapshot, tree_shaking_enabled, &mut analysis_cache)?;
+        if let Some(current) = module_map.get_mut(&current_name) {
+            current.source = source;
+            current.analysis = Some(analysis);
         }
 
         let current_module = module_map
@@ -383,34 +330,13 @@ pub fn bundle_file(entry_file: &str, opts: BundleOptions) -> Result<BundleResult
                 }
             }
 
-            let mut changed = false;
-            if !module_map.contains_key(&resolved.name) {
-                import_budget.track(&resolved.name)?;
-                module_map.insert(
-                    resolved.name.clone(),
-                    ModuleData {
-                        name: resolved.name.clone(),
-                        file_path: resolved.file_path.clone(),
-                        is_package: resolved.is_package,
-                        synthetic: resolved.synthetic,
-                        allow_sys_path_imports: current_module.allow_sys_path_imports
-                            || resolved.from_sys_path,
-                        source: Vec::new(),
-                        analysis: None,
-                    },
-                );
-                if !resolved.synthetic {
-                    queue.push_back(resolved.name.clone());
-                }
-                changed = true;
-            } else if current_module.allow_sys_path_imports
-                && let Some(existing) = module_map.get_mut(&resolved.name)
-                && !existing.allow_sys_path_imports
-            {
-                existing.allow_sys_path_imports = true;
-                queue.push_back(resolved.name.clone());
-                changed = true;
-            }
+            let changed = include_resolved_module(
+                &mut module_map,
+                &mut queue,
+                &mut import_budget,
+                &resolved,
+                current_module.allow_sys_path_imports,
+            )?;
 
             if changed || req.require_parent_packages {
                 ensure_parent_packages(
@@ -444,28 +370,7 @@ pub fn bundle_file(entry_file: &str, opts: BundleOptions) -> Result<BundleResult
     // Collect license information from dist-info directories
     let license_comments = collect_license_comments(&search_roots, &module_map, &sorted_modules);
 
-    // Build map of module name -> formatted license header strings
-    let mut license_headers: HashMap<String, Vec<String>> = HashMap::new();
-    for comment in &license_comments {
-        let mut header = format!(
-            "# ===== {} {} =====\n#\n",
-            comment.package_name, comment.version
-        );
-        for line in comment
-            .text
-            .trim_matches(|c| c == '\n' || c == '\r')
-            .lines()
-        {
-            header.push_str("# ");
-            header.push_str(line);
-            header.push('\n');
-        }
-        header.push('\n');
-        license_headers
-            .entry(comment.target_module.clone())
-            .or_default()
-            .push(header);
-    }
+    let license_headers = format_license_headers(&license_comments);
 
     let entry_module_data = module_map
         .get(&entry_module)
@@ -500,6 +405,119 @@ pub fn bundle_file(entry_file: &str, opts: BundleOptions) -> Result<BundleResult
         entry_module,
         bundled_module_list: module_list,
     })
+}
+
+fn resolve_entry_file(entry_file: &str) -> Result<(PathBuf, PathBuf), String> {
+    if entry_file.trim().is_empty() {
+        return Err("entry file is required".to_string());
+    }
+
+    let abs_entry = canonical_abs(Path::new(entry_file), "resolve entry file path")?;
+    let entry_meta = fs::metadata(&abs_entry).map_err(|err| format!("stat entry file: {err}"))?;
+    if entry_meta.is_dir() {
+        return Err(format!(
+            "entry file must be a Python file, got directory: {}",
+            abs_entry.display()
+        ));
+    }
+    if !has_py_extension(&abs_entry) {
+        return Err(format!(
+            "entry file must end with .py: {}",
+            abs_entry.display()
+        ));
+    }
+
+    let project_root = abs_entry
+        .parent()
+        .ok_or_else(|| "entry file must have parent directory".to_string())?
+        .to_path_buf();
+    Ok((abs_entry, project_root))
+}
+
+fn analyze_cached_module(
+    module: &ModuleData,
+    tree_shaking: bool,
+    cache: &mut AnalysisCache,
+) -> Result<(ModuleAnalysis, Vec<u8>), String> {
+    if let Some(cached) = cache.get(&module.file_path) {
+        return Ok(cached.clone());
+    }
+
+    let source = read_module_source(&module.file_path).map_err(|err| {
+        format!(
+            "read module {:?} ({}): {err}",
+            module.name,
+            module.file_path.display()
+        )
+    })?;
+    let source = if tree_shaking {
+        remove_unused_imports(&String::from_utf8_lossy(&source)).into_bytes()
+    } else {
+        source
+    };
+    let mut analyzed = module.clone();
+    analyzed.source.clone_from(&source);
+    let cached = (analyze_module(&analyzed)?, source);
+    cache.insert(module.file_path.clone(), cached.clone());
+    Ok(cached)
+}
+
+fn include_resolved_module(
+    module_map: &mut HashMap<String, ModuleData>,
+    queue: &mut VecDeque<String>,
+    import_budget: &mut ImportedModuleBudget,
+    resolved: &ResolvedModule,
+    allow_sys_path_imports: bool,
+) -> Result<bool, String> {
+    match module_map.entry(resolved.name.clone()) {
+        Entry::Vacant(entry) => {
+            import_budget.track(&resolved.name)?;
+            entry.insert(ModuleData {
+                name: resolved.name.clone(),
+                file_path: resolved.file_path.clone(),
+                is_package: resolved.is_package,
+                synthetic: resolved.synthetic,
+                allow_sys_path_imports: allow_sys_path_imports || resolved.from_sys_path,
+                source: Vec::new(),
+                analysis: None,
+            });
+            if !resolved.synthetic {
+                queue.push_back(resolved.name.clone());
+            }
+            Ok(true)
+        }
+        Entry::Occupied(mut entry)
+            if allow_sys_path_imports && !entry.get().allow_sys_path_imports =>
+        {
+            entry.get_mut().allow_sys_path_imports = true;
+            queue.push_back(resolved.name.clone());
+            Ok(true)
+        }
+        Entry::Occupied(_) => Ok(false),
+    }
+}
+
+fn format_license_headers(
+    comments: &[crate::licenses::LicenseComment],
+) -> HashMap<String, Vec<String>> {
+    let mut headers: HashMap<String, Vec<String>> = HashMap::new();
+    for comment in comments {
+        let mut header = format!(
+            "# ===== {} {} =====\n#\n",
+            comment.package_name, comment.version
+        );
+        for line in comment.text.trim_matches(['\n', '\r']).lines() {
+            header.push_str("# ");
+            header.push_str(line);
+            header.push('\n');
+        }
+        header.push('\n');
+        headers
+            .entry(comment.target_module.clone())
+            .or_default()
+            .push(header);
+    }
+    headers
 }
 
 fn canonical_abs(path: &Path, context: &str) -> Result<PathBuf, String> {
