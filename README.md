@@ -2,6 +2,8 @@
 
 ![Badge](https://github.com/cputils/pybundler/actions/workflows/ci.yml/badge.svg)
 
+English | [日本語](README.ja.md)
+
 **pybundler** bundles a Python entry file and its local dependencies into a single, standalone Python script.
 
 ## Quick start
